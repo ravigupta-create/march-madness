@@ -26,7 +26,7 @@ const App = (() => {
         const yr = new Date().getFullYear();
         document.getElementById('year-badge').textContent = yr;
         document.title = `March Madness ${yr} Bracket`;
-        tournamentData = MarchMadnessData.TOURNAMENT_2025;
+        tournamentData = MarchMadnessData.TOURNAMENT_2026;
         botBracket = PredictionEngine.generateBotBracket(tournamentData);
         loadSettings(); applySettings(); initUserBracket(); loadBracket();
         setupNav(); setupRegionTabs(); setupControls(); setupSettings();
