@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>March Madness Bracket</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='80'>🏀</text></svg>">
+</head>
+<body>
+
+    <canvas id="bg-canvas"></canvas>
+
+    <header class="header">
+        <h1>March Madness <span class="year-badge" id="year-badge"></span></h1>
+        <p class="subtitle">Interactive Bracket Challenge — AI-Powered Predictions & Analysis</p>
+    </header>
+
+    <nav class="nav">
+        <button class="nav-btn active" data-view="bracket">My Bracket</button>
+        <button class="nav-btn" data-view="bot">Bot Bracket</button>
+        <button class="nav-btn" data-view="analysis">Analysis</button>
+        <button class="nav-btn" data-view="h2h">Head to Head</button>
+    </nav>
+
+    <main class="main">
+
+        <!-- ======== MY BRACKET VIEW ======== -->
+        <div class="view active" id="view-bracket">
+            <div class="bracket-controls">
+                <button class="btn" id="btn-reset" title="Clear all picks">Reset</button>
+                <button class="btn" id="btn-randomize" title="Random bracket based on probabilities">Randomize</button>
+                <button class="btn btn-primary" id="btn-autofill" title="Fill remaining with most probable picks">Auto-Fill</button>
+                <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+                <span class="progress-text" id="progress-text">0 / 63</span>
+            </div>
+
+            <div class="region-tabs" id="region-tabs"></div>
+
+            <div class="bracket-container" id="bracket-container"></div>
+
+            <div class="final-four-section" id="final-four-section">
+                <div class="final-four-title">Final Four</div>
+                <div class="final-four-games" id="ff-games"></div>
+                <div class="championship-game" id="championship-game"></div>
+                <div class="champion-display" id="champion-display" style="display:none;">
+                    <div class="label">National Champion</div>
+                    <div class="champ-name" id="champ-name"></div>
+                    <div class="champ-seed" id="champ-seed"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ======== BOT BRACKET VIEW ======== -->
+        <div class="view" id="view-bot">
+            <div class="bot-explanation">
+                <h3>Bot Prediction Model</h3>
+                <p>
+                    This bracket is generated using a <strong>log5 probability model</strong> calibrated against
+                    40 years of NCAA tournament data (1985–present). Each matchup probability is computed from
+                    seed-based historical win rates, conference strength multipliers, and team efficiency ratings.
+                    The bot always picks the statistically most probable winner for each game — optimizing for
+                    the highest expected number of correct picks.
+                </p>
+            </div>
+            <div class="bot-picks-grid" id="bot-picks-grid"></div>
+            <div class="final-four-section active" id="bot-ff-section" style="margin-top:20px;">
+                <div class="final-four-title">Bot's Final Four & Champion</div>
+                <div id="bot-ff-display"></div>
+            </div>
+        </div>
+
+        <!-- ======== ANALYSIS VIEW ======== -->
+        <div class="view" id="view-analysis">
+            <div id="analysis-content">
+                <div class="empty-state">
+                    <div class="icon">📊</div>
+                    <h3>Fill in your bracket first</h3>
+                    <p>Complete at least a few picks in "My Bracket" to see your analysis. The more picks you make, the more detailed the analysis.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ======== HEAD TO HEAD VIEW ======== -->
+        <div class="view" id="view-h2h">
+            <div id="h2h-content">
+                <div class="empty-state">
+                    <div class="icon">⚔️</div>
+                    <h3>Make your picks first</h3>
+                    <p>Fill in your bracket to compare it against the bot's predictions pick by pick.</p>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Tooltip -->
+    <div class="tooltip" id="tooltip">
+        <div class="tip-matchup"></div>
+        <div class="tip-prob"></div>
+        <div class="tip-note"></div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Confetti Container -->
+    <div class="confetti-container" id="confetti-container"></div>
+
+    <script src="data.js"></script>
+    <script src="engine.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
