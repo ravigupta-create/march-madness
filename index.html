@@ -111,7 +111,17 @@
         <div class="view" id="view-bot">
             <div class="bot-explanation">
                 <h3>Bot Prediction Model</h3>
-                <p>Generated using a <strong>log5 probability model</strong> calibrated against 40 years of NCAA tournament data (1985&ndash;present). Factors: seed-based historical win rates, conference strength, team efficiency ratings. <strong>Click any pick for explanation.</strong></p>
+                <p>Generated using a <strong>log5 probability model</strong> calibrated against 40 years of NCAA tournament data (1985&ndash;present). Factors: seed-based historical win rates, conference strength, team efficiency ratings, and real season stats from ESPN. <strong>Click any pick for explanation, or ask below.</strong></p>
+            </div>
+            <!-- Ask the Bot -->
+            <div class="ask-bot-section" id="ask-bot-section">
+                <div class="ask-bot-header">Ask the Bot</div>
+                <div class="ask-bot-suggestions" id="ask-bot-suggestions"></div>
+                <div class="ask-bot-input-row">
+                    <input type="text" id="ask-bot-input" class="ask-bot-input" placeholder="Ask about any pick, team, or matchup..." maxlength="200" aria-label="Ask the bot a question">
+                    <button class="btn btn-primary" id="ask-bot-send">Ask</button>
+                </div>
+                <div class="ask-bot-response" id="ask-bot-response"></div>
             </div>
             <div class="bot-picks-grid" id="bot-picks-grid"></div>
             <div class="final-four-section active" id="bot-ff-section" style="margin-top:16px;">

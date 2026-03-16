@@ -168,6 +168,22 @@ body[data-particles="off"] #bg-canvas { opacity:0; }
 .ff4-game { min-width:160px; }
 .ff4-game .ff4-label { font-size:.6rem; color:var(--text-muted); text-align:center; padding:3px; font-weight:600; border-bottom:1px solid var(--border); }
 
+/* ---- Ask the Bot ---- */
+.ask-bot-section { background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:14px; }
+.ask-bot-header { font-size:.88rem; font-weight:800; color:var(--accent-blue); margin-bottom:8px; }
+.ask-bot-suggestions { display:flex; gap:5px; flex-wrap:wrap; margin-bottom:8px; }
+.ask-bot-chip { background:rgba(128,128,128,.06); border:1px solid var(--border); border-radius:14px; padding:3px 10px; font-size:.68rem; color:var(--text-secondary); cursor:pointer; font-family:var(--font); transition:all .2s; white-space:nowrap; }
+.ask-bot-chip:hover { border-color:var(--accent-blue); color:var(--text-primary); }
+.ask-bot-input-row { display:flex; gap:6px; margin-bottom:10px; }
+.ask-bot-input { flex:1; background:var(--bg-input); border:1px solid var(--border); border-radius:7px; padding:8px 12px; color:var(--text-primary); font-family:var(--font); font-size:.82rem; }
+.ask-bot-input:focus { outline:none; border-color:var(--accent-blue); }
+.ask-bot-response { min-height:0; transition:all .3s; }
+.ask-bot-answer { background:rgba(78,205,196,.04); border:1px solid rgba(78,205,196,.15); border-radius:8px; padding:12px 14px; font-size:.8rem; line-height:1.55; color:var(--text-primary); }
+.ask-bot-answer strong { color:var(--accent-orange); }
+.ask-bot-answer .stat-highlight { display:inline-block; background:rgba(255,107,53,.08); padding:1px 6px; border-radius:3px; font-family:var(--mono); font-size:.75rem; font-weight:600; margin:0 2px; }
+.ask-bot-answer .matchup-detail { margin:6px 0; padding:6px 8px; background:rgba(128,128,128,.04); border-radius:5px; font-size:.76rem; }
+.ask-bot-answer .section-label { font-size:.68rem; font-weight:700; color:var(--accent-gold); text-transform:uppercase; letter-spacing:.5px; margin-top:8px; margin-bottom:3px; }
+
 /* ---- Results Tracking ---- */
 .results-controls { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-bottom:12px; }
 .result-item { display:flex; align-items:center; gap:6px; padding:5px 8px; border-radius:6px; font-size:.76rem; margin-bottom:3px; }

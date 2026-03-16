@@ -31,7 +31,7 @@ const App = (() => {
         loadSettings(); applySettings(); initUserBracket(); loadBracket();
         setupNav(); setupRegionTabs(); setupControls(); setupSettings();
         setupSeedLegend(); setupKeysModal(); setupOnboarding(); setupKeyboard();
-        setupExport(); setupShare(); setupMultipleBrackets(); setupSwipe(); setupResults();
+        setupExport(); setupShare(); setupMultipleBrackets(); setupSwipe(); setupResults(); setupAskBot();
         initBackground(); renderFirstFour(); renderFullBracket(); renderBracket(); renderFinalFour(); renderBotBracket(); updateProgress();
 
         // Fetch real season stats from ESPN (analyzes every game played this season)
@@ -998,6 +998,275 @@ const App = (() => {
         const ob=document.getElementById('onboarding');
         if(!localStorage.getItem('mm-onboard-seen')) ob.classList.add('active');
         document.getElementById('btn-start').addEventListener('click',()=>{ob.classList.remove('active');localStorage.setItem('mm-onboard-seen','1');});
+    }
+
+    // ---- Ask the Bot ----
+    function setupAskBot() {
+        const input = document.getElementById('ask-bot-input');
+        const btn = document.getElementById('ask-bot-send');
+        const sugContainer = document.getElementById('ask-bot-suggestions');
+        if (!input || !btn) return;
+
+        // Suggested questions
+        const suggestions = [
+            'Who wins the championship?',
+            'What upsets do you predict?',
+            'Why Duke over Siena?',
+            'Tell me about Florida',
+            'Who wins the East?',
+            'Biggest upset pick?',
+            'Final Four teams?',
+            'How far does Kentucky go?'
+        ];
+        for (const q of suggestions) {
+            const chip = document.createElement('button');
+            chip.className = 'ask-bot-chip';
+            chip.textContent = q;
+            chip.addEventListener('click', () => { input.value = q; askBot(q); });
+            sugContainer.appendChild(chip);
+        }
+
+        btn.addEventListener('click', () => askBot(input.value));
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') askBot(input.value); });
+    }
+
+    function askBot(question) {
+        const q = question.trim().toLowerCase();
+        if (!q) return;
+        const resp = document.getElementById('ask-bot-response');
+
+        // Find all team names for matching
+        const allTeams = [];
+        for (const rn of MarchMadnessData.REGION_NAMES) {
+            for (const t of tournamentData.regions[rn]) allTeams.push(t);
+        }
+
+        const answer = generateBotAnswer(q, allTeams);
+        resp.innerHTML = `<div class="ask-bot-answer">${answer}</div>`;
+    }
+
+    function generateBotAnswer(q, allTeams) {
+        const stats = MarchMadnessData.getSeasonStats();
+        const R = MarchMadnessData.REGION_NAMES;
+
+        // Match team names in query
+        const matchedTeams = allTeams.filter(t => q.includes(t.name.toLowerCase()));
+
+        // ---- Championship question ----
+        if (q.includes('champion') || q.includes('win it all') || q.includes('national') || (q.includes('who') && q.includes('win') && !matchedTeams.length)) {
+            const ch = botBracket.champion;
+            const s = stats[ch.name];
+            let ans = `<strong>${ch.name}</strong> is my pick to win the national championship as the <span class="stat-highlight">#${ch.seed} seed</span> from the ${findTeamRegion(ch.name)} region.`;
+            ans += `<div class="section-label">Why ${ch.name}?</div>`;
+            if (s && s.ppg) {
+                ans += `<div class="matchup-detail">Season: ${s.wins || '?'}-${s.losses || '?'} | ${s.ppg?.toFixed(1) || '?'} PPG | ${s.papg?.toFixed(1) || '?'} PAPG`;
+                if (s.fgPct) ans += ` | ${(s.fgPct * 100).toFixed(1)}% FG`;
+                ans += `</div>`;
+            }
+            ans += `Championship game win probability: <span class="stat-highlight">${(botBracket.championship.probability * 100).toFixed(1)}%</span>. `;
+            ans += botBracket.championship.explanation || '';
+            return ans;
+        }
+
+        // ---- Final Four question ----
+        if (q.includes('final four') || q.includes('final 4')) {
+            const ff = [
+                botBracket.finalFour.game1.winner,
+                botBracket.finalFour.game2.winner,
+                botBracket[R[0]].champion, botBracket[R[1]].champion,
+                botBracket[R[2]].champion, botBracket[R[3]].champion
+            ];
+            const unique = [...new Set(ff.filter(t => t).map(t => `(${t.seed}) ${t.name}`))].slice(0, 4);
+            let ans = `<strong>My Final Four:</strong><br>`;
+            for (let i = 0; i < R.length; i++) {
+                const ch = botBracket[R[i]].champion;
+                const s = stats[ch.name];
+                ans += `<div class="matchup-detail"><strong>${R[i]}:</strong> (${ch.seed}) ${ch.name}`;
+                if (s && s.wins) ans += ` — ${s.wins}-${s.losses}`;
+                ans += `</div>`;
+            }
+            ans += `<div class="section-label">Semifinal matchups</div>`;
+            ans += `${botBracket.finalFour.game1.winner.name} vs ${botBracket.finalFour.game2.winner.name} for the title.`;
+            return ans;
+        }
+
+        // ---- Upsets question ----
+        if (q.includes('upset') || q.includes('cinderella') || q.includes('surprise')) {
+            const upsets = [];
+            for (const rn of R) {
+                for (const g of botBracket[rn].games) {
+                    if (g.isUpset) upsets.push(g);
+                }
+            }
+            if (upsets.length === 0) return 'I don\'t predict any upsets in this tournament — chalk all the way. The higher seeds are significantly stronger across the board this year.';
+
+            let ans = `<strong>I predict ${upsets.length} upset(s):</strong>`;
+            const sorted = upsets.sort((a, b) => a.probability - b.probability);
+            for (const u of sorted) {
+                const loser = u.winner === u.teamA ? u.teamB : u.teamA;
+                ans += `<div class="matchup-detail"><strong>(${u.winner.seed}) ${u.winner.name}</strong> over (${loser.seed}) ${loser.name} in ${MarchMadnessData.ROUND_NAMES[u.round - 1]} — <span class="stat-highlight">${(u.probability * 100).toFixed(1)}%</span>`;
+                const sw = stats[u.winner.name];
+                if (sw && sw.ppg) ans += ` | ${u.winner.name}: ${sw.ppg.toFixed(1)} PPG`;
+                ans += `</div>`;
+            }
+            if (sorted.length > 0) {
+                ans += `<div class="section-label">Biggest upset</div>${sorted[0].winner.name} over ${(sorted[0].winner === sorted[0].teamA ? sorted[0].teamB : sorted[0].teamA).name} at just ${(sorted[0].probability * 100).toFixed(1)}% probability.`;
+            }
+            return ans;
+        }
+
+        // ---- Region winner question ----
+        for (const rn of R) {
+            if (q.includes(rn.toLowerCase()) && (q.includes('win') || q.includes('champion') || q.includes('region'))) {
+                const ch = botBracket[rn].champion;
+                const s = stats[ch.name];
+                let ans = `<strong>(${ch.seed}) ${ch.name}</strong> wins the ${rn} region.`;
+                if (s && s.ppg) {
+                    ans += `<div class="matchup-detail">Season: ${s.wins || '?'}-${s.losses || '?'} | ${s.ppg.toFixed(1)} PPG | ${s.papg?.toFixed(1) || '?'} PAPG</div>`;
+                }
+                ans += `<div class="section-label">${rn} path</div>`;
+                for (const g of botBracket[rn].games) {
+                    if (g.winner.name === ch.name) {
+                        const loser = g.winner === g.teamA ? g.teamB : g.teamA;
+                        ans += `<div class="matchup-detail">${MarchMadnessData.ROUND_SHORT[g.round - 1]}: over (${loser.seed}) ${loser.name} — ${(g.probability * 100).toFixed(0)}%</div>`;
+                    }
+                }
+                return ans;
+            }
+        }
+
+        // ---- Specific team question ----
+        if (matchedTeams.length >= 1) {
+            const team = matchedTeams[0];
+            const rn = findTeamRegion(team.name);
+
+            // "Why X over Y" or "X vs Y"
+            if (matchedTeams.length >= 2 || q.includes(' over ') || q.includes(' vs ') || q.includes(' beat')) {
+                const tA = matchedTeams[0];
+                const tB = matchedTeams.length >= 2 ? matchedTeams[1] : null;
+
+                // Find the bot's game with these teams
+                if (tB) {
+                    for (const r of R) {
+                        for (const g of botBracket[r].games) {
+                            if ((g.teamA.name === tA.name && g.teamB.name === tB.name) || (g.teamA.name === tB.name && g.teamB.name === tA.name)) {
+                                const loser = g.winner === g.teamA ? g.teamB : g.teamA;
+                                let ans = `<strong>(${g.winner.seed}) ${g.winner.name}</strong> over (${loser.seed}) ${loser.name} in ${MarchMadnessData.ROUND_NAMES[g.round - 1]}.`;
+                                ans += `<div class="matchup-detail">Win probability: <span class="stat-highlight">${(g.probability * 100).toFixed(1)}%</span></div>`;
+                                ans += `<div class="section-label">Reasoning</div>${g.explanation}`;
+                                const sW = stats[g.winner.name], sL = stats[loser.name];
+                                if (sW && sW.ppg && sL && sL.ppg) {
+                                    ans += `<div class="section-label">Season comparison</div>`;
+                                    ans += `<div class="matchup-detail">${g.winner.name}: ${sW.wins || '?'}-${sW.losses || '?'}, ${sW.ppg.toFixed(1)} PPG, ${sW.papg?.toFixed(1) || '?'} PAPG${sW.fgPct ? ', ' + (sW.fgPct * 100).toFixed(1) + '% FG' : ''}</div>`;
+                                    ans += `<div class="matchup-detail">${loser.name}: ${sL.wins || '?'}-${sL.losses || '?'}, ${sL.ppg.toFixed(1)} PPG, ${sL.papg?.toFixed(1) || '?'} PAPG${sL.fgPct ? ', ' + (sL.fgPct * 100).toFixed(1) + '% FG' : ''}</div>`;
+                                }
+                                return ans;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // "Tell me about X" / "How far does X go"
+            let ans = `<strong>(${team.seed}) ${team.name}</strong> — ${team.conference}, ${rn} Region`;
+            const s = stats[team.name];
+            if (s && s.ppg) {
+                ans += `<div class="matchup-detail">Season: ${s.wins || '?'}-${s.losses || '?'} | ${s.ppg.toFixed(1)} PPG | ${s.papg?.toFixed(1) || '?'} PAPG`;
+                if (s.fgPct) ans += ` | ${(s.fgPct * 100).toFixed(1)}% FG`;
+                if (s.rpg) ans += ` | ${s.rpg.toFixed(1)} RPG`;
+                if (s.apg) ans += ` | ${s.apg.toFixed(1)} APG`;
+                ans += `</div>`;
+            }
+
+            // How far does the bot have them going?
+            let furthestRound = 0;
+            if (rn) {
+                for (const g of botBracket[rn].games) {
+                    if (g.winner.name === team.name) furthestRound = g.round;
+                }
+            }
+            // Check FF
+            if (botBracket.finalFour.game1.winner?.name === team.name || botBracket.finalFour.game2.winner?.name === team.name) furthestRound = 5;
+            if (botBracket.championship.winner?.name === team.name) furthestRound = 6;
+
+            const roundLabels = ['Round of 64', 'Round of 32', 'Sweet 16', 'Elite 8', 'Final Four', 'Championship Game', 'National Champion'];
+            if (furthestRound > 0) {
+                const exitRound = furthestRound < 6 ? furthestRound : 6;
+                ans += `<div class="section-label">Bot's prediction</div>`;
+                ans += `I have ${team.name} reaching the <strong>${roundLabels[furthestRound]}</strong>`;
+                if (furthestRound === 6) ans += ` and winning it all`;
+                ans += `.`;
+
+                // Show their path
+                if (rn) {
+                    ans += `<div class="section-label">Path</div>`;
+                    for (const g of botBracket[rn].games) {
+                        if (g.winner.name === team.name) {
+                            const loser = g.winner === g.teamA ? g.teamB : g.teamA;
+                            ans += `<div class="matchup-detail">${MarchMadnessData.ROUND_SHORT[g.round - 1]}: over (${loser.seed}) ${loser.name} — ${(g.probability * 100).toFixed(0)}%</div>`;
+                        }
+                    }
+                }
+            } else {
+                ans += `<div class="section-label">Bot's prediction</div>I have ${team.name} losing in the first round.`;
+                // Find who beats them
+                if (rn) {
+                    for (const g of botBracket[rn].games) {
+                        if (g.round === 1 && (g.teamA.name === team.name || g.teamB.name === team.name) && g.winner.name !== team.name) {
+                            ans += ` They lose to <strong>(${g.winner.seed}) ${g.winner.name}</strong> (${(g.probability * 100).toFixed(0)}% probability).`;
+                        }
+                    }
+                }
+            }
+
+            // MC simulation data if available
+            if (mcResults && mcResults[team.name]) {
+                const mc = mcResults[team.name];
+                ans += `<div class="section-label">Monte Carlo (5,000 sims)</div>`;
+                ans += `<div class="matchup-detail">Championship probability: <span class="stat-highlight">${(mc.championshipProb * 100).toFixed(1)}%</span> | Final Four: ${(mc.roundReach[5] * 100).toFixed(1)}% | Elite 8: ${(mc.roundReach[4] * 100).toFixed(1)}%</div>`;
+            }
+
+            return ans;
+        }
+
+        // ---- General questions ----
+        if (q.includes('how') && q.includes('work')) {
+            return 'My predictions use a <strong>log5 probability model</strong> calibrated on 40 years of NCAA tournament data. I fetch real season stats from ESPN (PPG, PAPG, FG%, rebounds, assists, turnovers, win-loss record) for all 64 teams. My composite rating weighs: net rating (30%), win % (25%), offensive efficiency (15%), defensive efficiency (15%), ball security (8%), and rebounding (7%). I blend this with historical seed-based probabilities for the final prediction.';
+        }
+
+        if (q.includes('best') && q.includes('team')) {
+            const ch = botBracket.champion;
+            return `The strongest team in my model is <strong>${ch.name}</strong> (#${ch.seed} seed). They have the highest composite rating when combining season stats, conference strength, and historical seed performance.`;
+        }
+
+        if (q.includes('dark horse') || q.includes('sleeper')) {
+            // Find highest-seeded team that goes furthest
+            let best = null;
+            for (const rn of R) {
+                const ch = botBracket[rn].champion;
+                if (ch.seed >= 4 && (!best || ch.seed > best.seed)) best = ch;
+            }
+            if (best) {
+                return `My dark horse pick is <strong>(${best.seed}) ${best.name}</strong> from the ${findTeamRegion(best.name)} region. They win their region despite being a ${best.seed}-seed, which happens about ${(MarchMadnessData.SEED_ROUND_REACH[best.seed][4] * 100).toFixed(0)}% of the time historically.`;
+            }
+            return 'No major dark horses this year — the higher seeds are strong across all regions.';
+        }
+
+        // Fallback
+        return `I'm not sure what you're asking. Try asking about:<br>
+        <div class="matchup-detail">- A specific team: "Tell me about Duke"</div>
+        <div class="matchup-detail">- A matchup: "Why Duke over Siena?"</div>
+        <div class="matchup-detail">- Predictions: "Who wins the championship?"</div>
+        <div class="matchup-detail">- Upsets: "What upsets do you predict?"</div>
+        <div class="matchup-detail">- Region: "Who wins the East?"</div>
+        <div class="matchup-detail">- Dark horses: "Who's your sleeper pick?"</div>`;
+    }
+
+    function findTeamRegion(name) {
+        for (const rn of MarchMadnessData.REGION_NAMES) {
+            if (tournamentData.regions[rn].find(t => t.name === name)) return rn;
+        }
+        return '';
     }
 
     // ---- Keyboard ----
