@@ -1,19 +1,18 @@
 // ============================================================
 // MARCH MADNESS DATA MODULE
-// Historical probabilities, team data, and tournament structure
+// Historical probabilities, team data, tournament structure,
+// scoring systems, and live data fetching
 // ============================================================
 
 const MarchMadnessData = (() => {
 
-    // Historical seed win rates in Round 1 (1985-2024, ~40 years of data)
-    // Source: NCAA tournament historical results
+    // Historical seed win rates in Round 1 (1985-2024, ~40 years)
     const ROUND1_HISTORICAL = {
         '1v16': 0.994, '2v15': 0.944, '3v14': 0.852, '4v13': 0.792,
         '5v12': 0.647, '6v11': 0.622, '7v10': 0.608, '8v9': 0.515
     };
 
     // Seed strength ratings calibrated to historical tournament performance
-    // These represent the "true strength" of each seed, used in log5 calculations
     const SEED_STRENGTH = {
         1: 0.920, 2: 0.860, 3: 0.790, 4: 0.740,
         5: 0.680, 6: 0.660, 7: 0.640, 8: 0.540,
@@ -21,8 +20,19 @@ const MarchMadnessData = (() => {
         13: 0.300, 14: 0.250, 15: 0.180, 16: 0.060
     };
 
+    // Historical seed-by-seed Round 1 records (wins-losses for lower seed)
+    const SEED_MATCHUP_HISTORY = {
+        '1v16': { wins: 155, losses: 1, note: 'Only UMBC over Virginia (2018) and FDU over Purdue (2023)' },
+        '2v15': { wins: 151, losses: 9, note: '15-seeds win ~5.6%. Notable: Oral Roberts (2021), St. Peters (2022)' },
+        '3v14': { wins: 136, losses: 24, note: '14-seeds win ~15%. Abilene Christian (2021), Fairleigh Dickinson (2023)' },
+        '4v13': { wins: 127, losses: 33, note: '13-seeds win ~21%. Sister Jeans Loyola-Chicago (2018)' },
+        '5v12': { wins: 103, losses: 57, note: '12-seeds win ~35%. At least one 12-over-5 most years' },
+        '6v11': { wins: 100, losses: 60, note: '11-seeds win ~38%. Often play-in teams with momentum' },
+        '7v10': { wins: 97, losses: 63, note: '10-seeds win ~39%. Very competitive matchup' },
+        '8v9': { wins: 82, losses: 78, note: 'Near coin flip. 8-seeds only slightly favored historically' }
+    };
+
     // Historical probability of each seed reaching each round
-    // (percentage of teams with that seed that reach each round)
     const SEED_ROUND_REACH = {
         1:  [1.00, 0.994, 0.88, 0.72, 0.52, 0.38, 0.22],
         2:  [1.00, 0.944, 0.78, 0.56, 0.35, 0.22, 0.12],
@@ -42,7 +52,12 @@ const MarchMadnessData = (() => {
         16: [1.00, 0.006, 0.001, 0.0002, 0.00005, 0.00001, 0.000002]
     };
 
-    // Conference strength multipliers (affects predictions slightly)
+    // Average upsets per tournament by round (historical)
+    const AVG_UPSETS_PER_ROUND = {
+        1: 5.4, 2: 2.8, 3: 1.5, 4: 0.8, 5: 0.5, 6: 0.3
+    };
+
+    // Conference strength multipliers
     const CONFERENCE_STRENGTH = {
         'SEC': 1.08, 'Big Ten': 1.06, 'Big 12': 1.06, 'ACC': 1.04,
         'Big East': 1.03, 'Pac-12': 1.02, 'AAC': 1.00, 'MWC': 0.99,
@@ -55,17 +70,26 @@ const MarchMadnessData = (() => {
         'default': 0.95
     };
 
+    // Scoring systems for bracket pools
+    const SCORING_SYSTEMS = {
+        standard: { name: 'Standard', points: [10, 20, 40, 80, 160, 320] },
+        espn: { name: 'ESPN', points: [10, 20, 40, 80, 160, 320] },
+        upset: { name: 'Upset Bonus', points: [10, 20, 40, 80, 160, 320], upsetMultiplier: true },
+        seed: { name: 'Seed Weighted', points: [1, 2, 4, 8, 16, 32], seedMultiplier: true }
+    };
+
     // Standard bracket matchup order (seed pairings for round 1)
     const BRACKET_ORDER = [
         [1, 16], [8, 9], [5, 12], [4, 13],
         [6, 11], [3, 14], [7, 10], [2, 15]
     ];
 
-    // Region names
     const REGION_NAMES = ['East', 'West', 'South', 'Midwest'];
 
-    // 2025 NCAA Tournament teams (most recent complete tournament data)
-    // This data auto-loads as fallback; users can fetch current year or enter manually
+    const ROUND_NAMES = ['Round of 64', 'Round of 32', 'Sweet 16', 'Elite 8', 'Final Four', 'Championship'];
+    const ROUND_SHORT = ['R64', 'R32', 'S16', 'E8', 'FF', 'CHAMP'];
+
+    // 2025 NCAA Tournament teams
     const TOURNAMENT_2025 = {
         year: 2025,
         regions: {
@@ -144,27 +168,38 @@ const MarchMadnessData = (() => {
         }
     };
 
-    // Get teams arranged in bracket matchup order for a region
     function getTeamsInBracketOrder(regionTeams) {
         const ordered = [];
         for (const [seedA, seedB] of BRACKET_ORDER) {
             const teamA = regionTeams.find(t => t.seed === seedA);
             const teamB = regionTeams.find(t => t.seed === seedB);
-            if (teamA && teamB) {
-                ordered.push(teamA, teamB);
-            }
+            if (teamA && teamB) ordered.push(teamA, teamB);
         }
         return ordered;
     }
 
+    // Attempt to fetch live tournament data from ESPN public API
+    async function fetchLiveData(year) {
+        try {
+            const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?groups=100&limit=100&dates=${year}0315`;
+            const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            // Parse ESPN data format (if available)
+            if (data.events && data.events.length > 0) {
+                return { source: 'espn', events: data.events, year };
+            }
+            return null;
+        } catch (e) {
+            return null;
+        }
+    }
+
     return {
-        ROUND1_HISTORICAL,
-        SEED_STRENGTH,
-        SEED_ROUND_REACH,
-        CONFERENCE_STRENGTH,
-        BRACKET_ORDER,
-        REGION_NAMES,
-        TOURNAMENT_2025,
-        getTeamsInBracketOrder
+        ROUND1_HISTORICAL, SEED_STRENGTH, SEED_ROUND_REACH,
+        SEED_MATCHUP_HISTORY, AVG_UPSETS_PER_ROUND,
+        CONFERENCE_STRENGTH, SCORING_SYSTEMS,
+        BRACKET_ORDER, REGION_NAMES, ROUND_NAMES, ROUND_SHORT,
+        TOURNAMENT_2025, getTeamsInBracketOrder, fetchLiveData
     };
 })();

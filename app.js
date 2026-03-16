@@ -1,111 +1,136 @@
 // ============================================================
-// MARCH MADNESS APP — Main UI Logic
-// Bracket rendering, interaction, analysis display
+// MARCH MADNESS APP — Complete UI, Settings, Undo/Redo,
+// Keyboard Nav, Export, Simulation, Analysis
 // ============================================================
 
 const App = (() => {
-    // State
+    // ---- State ----
     let tournamentData = null;
     let botBracket = null;
+    let mcResults = null;
     let currentView = 'bracket';
     let activeRegion = 0;
 
-    // User bracket state: for each region, an array of rounds;
-    // each round is an array of winners (team objects or null)
-    let userBracket = {
-        regions: {},
-        finalFour: { game1: {}, game2: {} },
-        championship: {}
-    };
-
+    let userBracket = { regions: {}, finalFour: { game1: {}, game2: {} }, championship: {} };
     let totalPicks = 0;
     const TOTAL_GAMES = 63;
 
-    // Sound effects using Web Audio
+    // Undo/Redo stacks
+    const undoStack = [];
+    const redoStack = [];
+    const MAX_UNDO = 30;
+
+    // Settings
+    let settings = {
+        dark: true,
+        particles: true,
+        probs: true,
+        sounds: true,
+        autosave: true,
+        scoring: 'standard'
+    };
+
+    // Audio context
     let audioCtx = null;
-    function playClick() {
+
+    function getAudioCtx() {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.frequency.value = 800;
-        gain.gain.value = 0.08;
-        osc.start();
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
-        osc.stop(audioCtx.currentTime + 0.08);
+        return audioCtx;
     }
 
+    function playSound(freq, dur, type = 'sine') {
+        if (!settings.sounds) return;
+        try {
+            const ctx = getAudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = type;
+            osc.frequency.value = freq;
+            gain.gain.value = 0.08;
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+            osc.stop(ctx.currentTime + dur);
+        } catch (e) { /* silent */ }
+    }
+
+    function playClick() { playSound(800, 0.08); }
+
     function playAdvance() {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.type = 'triangle';
-        osc.frequency.value = 523;
-        gain.gain.value = 0.1;
-        osc.start();
-        osc.frequency.exponentialRampToValueAtTime(784, audioCtx.currentTime + 0.15);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
-        osc.stop(audioCtx.currentTime + 0.2);
+        if (!settings.sounds) return;
+        try {
+            const ctx = getAudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = 'triangle';
+            osc.frequency.value = 523;
+            gain.gain.value = 0.1;
+            osc.start();
+            osc.frequency.exponentialRampToValueAtTime(784, ctx.currentTime + 0.15);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+            osc.stop(ctx.currentTime + 0.2);
+        } catch (e) { /* silent */ }
     }
 
     function playChampion() {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const notes = [523, 659, 784, 1047];
-        notes.forEach((freq, i) => {
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.type = 'triangle';
-            osc.frequency.value = freq;
-            gain.gain.value = 0.12;
-            osc.start(audioCtx.currentTime + i * 0.15);
-            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.15 + 0.3);
-            osc.stop(audioCtx.currentTime + i * 0.15 + 0.3);
-        });
+        if (!settings.sounds) return;
+        try {
+            const ctx = getAudioCtx();
+            [523, 659, 784, 1047].forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = 'triangle';
+                osc.frequency.value = freq;
+                gain.gain.value = 0.12;
+                osc.start(ctx.currentTime + i * 0.15);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.3);
+                osc.stop(ctx.currentTime + i * 0.15 + 0.3);
+            });
+        } catch (e) { /* silent */ }
     }
 
-    // Initialize
+    // ---- Initialize ----
     function init() {
         const year = new Date().getFullYear();
         document.getElementById('year-badge').textContent = year;
         document.title = `March Madness ${year} Bracket`;
 
-        // Load tournament data (use 2025 as fallback)
         tournamentData = MarchMadnessData.TOURNAMENT_2025;
-
-        // Generate bot bracket
         botBracket = PredictionEngine.generateBotBracket(tournamentData);
 
-        // Initialize user bracket structure
+        loadSettings();
+        applySettings();
         initUserBracket();
-
-        // Load saved bracket from localStorage
         loadBracket();
 
-        // Render
         setupNav();
         setupRegionTabs();
+        setupControls();
+        setupSettings();
+        setupSeedLegend();
+        setupOnboarding();
+        setupKeyboard();
+        initBackground();
+
         renderBracket();
         renderFinalFour();
         renderBotBracket();
-        setupControls();
-        initBackground();
         updateProgress();
     }
 
     function initUserBracket() {
+        userBracket = { regions: {}, finalFour: { game1: {}, game2: {} }, championship: {} };
         for (const regionName of MarchMadnessData.REGION_NAMES) {
-            const teams = tournamentData.regions[regionName];
-            const ordered = MarchMadnessData.getTeamsInBracketOrder(teams);
             userBracket.regions[regionName] = [
-                new Array(8).fill(null),  // Round 1 winners
-                new Array(4).fill(null),  // Round 2 winners
-                new Array(2).fill(null),  // Sweet 16 winners
-                new Array(1).fill(null),  // Elite 8 winner
+                new Array(8).fill(null),
+                new Array(4).fill(null),
+                new Array(2).fill(null),
+                new Array(1).fill(null)
             ];
         }
         userBracket.finalFour = {
@@ -115,26 +140,94 @@ const App = (() => {
         userBracket.championship = { teamA: null, teamB: null, winner: null };
     }
 
-    // Navigation
+    // ---- Undo/Redo ----
+    function pushUndoState() {
+        undoStack.push(JSON.stringify(userBracket));
+        if (undoStack.length > MAX_UNDO) undoStack.shift();
+        redoStack.length = 0;
+        updateUndoButtons();
+    }
+
+    function undo() {
+        if (undoStack.length === 0) return;
+        redoStack.push(JSON.stringify(userBracket));
+        userBracket = JSON.parse(undoStack.pop());
+        restoreTeamRefs();
+        refreshAll();
+        showToast('Undone');
+        updateUndoButtons();
+    }
+
+    function redo() {
+        if (redoStack.length === 0) return;
+        undoStack.push(JSON.stringify(userBracket));
+        userBracket = JSON.parse(redoStack.pop());
+        restoreTeamRefs();
+        refreshAll();
+        showToast('Redone');
+        updateUndoButtons();
+    }
+
+    function updateUndoButtons() {
+        const undoBtn = document.getElementById('btn-undo');
+        const redoBtn = document.getElementById('btn-redo');
+        if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+        if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+    }
+
+    // After JSON parse, replace team name strings with actual team object refs
+    function restoreTeamRefs() {
+        for (const regionName of MarchMadnessData.REGION_NAMES) {
+            const rounds = userBracket.regions[regionName];
+            for (let r = 0; r < rounds.length; r++) {
+                for (let m = 0; m < rounds[r].length; m++) {
+                    if (rounds[r][m]) {
+                        rounds[r][m] = findTeamByName(rounds[r][m].name) || rounds[r][m];
+                    }
+                }
+            }
+        }
+        const ff = userBracket.finalFour;
+        for (const game of [ff.game1, ff.game2]) {
+            if (game.teamA) game.teamA = findTeamByName(game.teamA.name) || game.teamA;
+            if (game.teamB) game.teamB = findTeamByName(game.teamB.name) || game.teamB;
+            if (game.winner) game.winner = findTeamByName(game.winner.name) || game.winner;
+        }
+        const ch = userBracket.championship;
+        if (ch.teamA) ch.teamA = findTeamByName(ch.teamA.name) || ch.teamA;
+        if (ch.teamB) ch.teamB = findTeamByName(ch.teamB.name) || ch.teamB;
+        if (ch.winner) ch.winner = findTeamByName(ch.winner.name) || ch.winner;
+    }
+
+    function refreshAll() {
+        renderBracket();
+        renderFinalFour();
+        updateProgress();
+        if (settings.autosave) saveBracket();
+        showRegion(activeRegion);
+    }
+
+    // ---- Navigation ----
     function setupNav() {
         document.querySelectorAll('.nav-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const view = btn.dataset.view;
-                switchView(view);
-            });
+            btn.addEventListener('click', () => switchView(btn.dataset.view));
         });
     }
 
     function switchView(view) {
         currentView = view;
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
-        document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${view}`));
-
+        document.querySelectorAll('.nav-btn').forEach(b =>
+            b.classList.toggle('active', b.dataset.view === view)
+        );
+        document.querySelectorAll('.view').forEach(v =>
+            v.classList.toggle('active', v.id === `view-${view}`)
+        );
         if (view === 'analysis') renderAnalysis();
         if (view === 'h2h') renderH2H();
+        if (view === 'simulate') runSimulation();
     }
 
-    // Region tabs
+    // ---- Region tabs ----
     function setupRegionTabs() {
         const container = document.getElementById('region-tabs');
         const names = [...MarchMadnessData.REGION_NAMES, 'Final Four'];
@@ -142,10 +235,16 @@ const App = (() => {
             const btn = document.createElement('button');
             btn.className = `region-tab${i === 0 ? ' active' : ''}`;
             btn.textContent = name;
+            btn.setAttribute('role', 'tab');
+            btn.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
             btn.addEventListener('click', () => {
                 activeRegion = i;
-                container.querySelectorAll('.region-tab').forEach(t => t.classList.remove('active'));
+                container.querySelectorAll('.region-tab').forEach(t => {
+                    t.classList.remove('active');
+                    t.setAttribute('aria-selected', 'false');
+                });
                 btn.classList.add('active');
+                btn.setAttribute('aria-selected', 'true');
                 showRegion(i);
             });
             container.appendChild(btn);
@@ -153,9 +252,9 @@ const App = (() => {
     }
 
     function showRegion(index) {
-        document.querySelectorAll('.bracket-region').forEach((r, i) => {
-            r.classList.toggle('active', i === index);
-        });
+        document.querySelectorAll('.bracket-region').forEach((r, i) =>
+            r.classList.toggle('active', i === index)
+        );
         const ffSection = document.getElementById('final-four-section');
         if (index === 4) {
             ffSection.classList.add('active');
@@ -165,20 +264,21 @@ const App = (() => {
         }
     }
 
-    // Render bracket
+    // ---- Bracket Rendering ----
     function renderBracket() {
         const container = document.getElementById('bracket-container');
         container.innerHTML = '';
 
         MarchMadnessData.REGION_NAMES.forEach((regionName, ri) => {
             const regionEl = document.createElement('div');
-            regionEl.className = `bracket-region${ri === 0 ? ' active' : ''}`;
+            regionEl.className = `bracket-region${ri === activeRegion && activeRegion < 4 ? ' active' : ''}`;
             regionEl.dataset.region = regionName;
+            regionEl.setAttribute('role', 'tabpanel');
+            regionEl.setAttribute('aria-label', `${regionName} Region bracket`);
 
             const teams = tournamentData.regions[regionName];
             const ordered = MarchMadnessData.getTeamsInBracketOrder(teams);
-
-            const roundNames = ['Round of 64', 'Round of 32', 'Sweet 16', 'Elite 8'];
+            const roundNames = MarchMadnessData.ROUND_NAMES.slice(0, 4);
             const matchupsPerRound = [8, 4, 2, 1];
 
             for (let round = 0; round < 4; round++) {
@@ -197,31 +297,25 @@ const App = (() => {
                     const pair = document.createElement('div');
                     pair.className = 'matchup-pair';
 
-                    // Get the two teams for this matchup
                     let teamA, teamB;
                     if (round === 0) {
                         teamA = ordered[m * 2];
                         teamB = ordered[m * 2 + 1];
                     } else {
-                        // Get from previous round winners
                         teamA = userBracket.regions[regionName][round - 1][m * 2] || null;
                         teamB = userBracket.regions[regionName][round - 1][m * 2 + 1] || null;
                     }
 
                     const winner = userBracket.regions[regionName][round][m];
 
-                    // Team A slot
                     pair.appendChild(createTeamSlot(teamA, winner, regionName, round, m, 0, teamB));
-                    // Team B slot
                     pair.appendChild(createTeamSlot(teamB, winner, regionName, round, m, 1, teamA));
 
                     matchup.appendChild(pair);
                     roundEl.appendChild(matchup);
                 }
-
                 regionEl.appendChild(roundEl);
             }
-
             container.appendChild(regionEl);
         });
     }
@@ -229,10 +323,14 @@ const App = (() => {
     function createTeamSlot(team, winner, regionName, round, matchupIdx, slotIdx, opponent) {
         const slot = document.createElement('div');
         slot.className = 'team-slot';
+        slot.setAttribute('tabindex', team ? '0' : '-1');
+        slot.setAttribute('role', 'button');
 
         if (!team) {
             slot.classList.add('empty');
-            slot.innerHTML = '<span class="team-name">—</span>';
+            slot.innerHTML = '<span class="team-name">&mdash;</span>';
+            slot.removeAttribute('role');
+            slot.setAttribute('tabindex', '-1');
             return slot;
         }
 
@@ -242,17 +340,19 @@ const App = (() => {
         if (isWinner) slot.classList.add('winner');
         if (isEliminated) slot.classList.add('eliminated');
 
-        // Seed badge
+        slot.setAttribute('aria-label', `${team.name}, seed ${team.seed}${isWinner ? ', selected' : ''}${isEliminated ? ', eliminated' : ''}`);
+
         const seedEl = document.createElement('span');
         seedEl.className = 'team-seed';
         seedEl.textContent = team.seed;
 
-        // Team name
         const nameEl = document.createElement('span');
         nameEl.className = 'team-name';
         nameEl.textContent = team.name;
 
-        // Win probability
+        slot.appendChild(seedEl);
+        slot.appendChild(nameEl);
+
         if (opponent) {
             const prob = PredictionEngine.getWinProbability(team, opponent);
             const probEl = document.createElement('span');
@@ -263,125 +363,99 @@ const App = (() => {
             else if (prob >= 0.45) probEl.classList.add('moderate');
             else if (prob >= 0.25) probEl.classList.add('risky');
             else probEl.classList.add('longshot');
-            slot.appendChild(seedEl);
-            slot.appendChild(nameEl);
             slot.appendChild(probEl);
-        } else {
-            slot.appendChild(seedEl);
-            slot.appendChild(nameEl);
         }
 
-        // Click handler
-        slot.addEventListener('click', () => {
+        const handleSelect = () => {
             if (!team) return;
             selectWinner(regionName, round, matchupIdx, team);
             playClick();
-        });
+        };
 
-        // Tooltip on hover
-        slot.addEventListener('mouseenter', (e) => {
-            if (team && opponent) {
-                showTooltip(e, team, opponent);
+        slot.addEventListener('click', handleSelect);
+        slot.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleSelect();
             }
         });
+
+        slot.addEventListener('mouseenter', (e) => {
+            if (team && opponent) showTooltip(e, team, opponent);
+        });
         slot.addEventListener('mouseleave', hideTooltip);
+        slot.addEventListener('focus', (e) => {
+            if (team && opponent) showTooltip(e, team, opponent);
+        });
+        slot.addEventListener('blur', hideTooltip);
 
         return slot;
     }
 
     function selectWinner(regionName, round, matchupIdx, team) {
+        pushUndoState();
         const regionRounds = userBracket.regions[regionName];
         const prevWinner = regionRounds[round][matchupIdx];
 
-        // Set winner
         regionRounds[round][matchupIdx] = team;
 
-        // If winner changed, clear downstream picks that depended on the old winner
         if (prevWinner && prevWinner.name !== team.name) {
             clearDownstream(regionName, round, matchupIdx, prevWinner);
         }
 
-        // Propagate to next round
-        if (round < 3) {
-            // Nothing to propagate here - next round matchup auto-picks up the winner
-        }
-
-        // Update Final Four teams
         updateFinalFourTeams();
-
-        // Re-render and save
-        renderBracket();
-        renderFinalFour();
-        updateProgress();
-        saveBracket();
-        showRegion(activeRegion);
+        refreshAll();
     }
 
     function clearDownstream(regionName, round, matchupIdx, oldTeam) {
         const regionRounds = userBracket.regions[regionName];
-        // Clear subsequent rounds if they had the old team
         for (let r = round + 1; r < 4; r++) {
             for (let m = 0; m < regionRounds[r].length; m++) {
-                if (regionRounds[r][m] && regionRounds[r][m].name === oldTeam.name) {
+                if (regionRounds[r][m]?.name === oldTeam.name) {
                     regionRounds[r][m] = null;
                 }
             }
         }
-
-        // Clear Final Four / Championship if affected
+        // Clear FF/Championship
         const ff = userBracket.finalFour;
-        const champ = userBracket.championship;
-        if (ff.game1.teamA?.name === oldTeam.name) ff.game1.teamA = null;
-        if (ff.game1.teamB?.name === oldTeam.name) ff.game1.teamB = null;
-        if (ff.game1.winner?.name === oldTeam.name) ff.game1.winner = null;
-        if (ff.game2.teamA?.name === oldTeam.name) ff.game2.teamA = null;
-        if (ff.game2.teamB?.name === oldTeam.name) ff.game2.teamB = null;
-        if (ff.game2.winner?.name === oldTeam.name) ff.game2.winner = null;
-        if (champ.teamA?.name === oldTeam.name) champ.teamA = null;
-        if (champ.teamB?.name === oldTeam.name) champ.teamB = null;
-        if (champ.winner?.name === oldTeam.name) champ.winner = null;
+        const ch = userBracket.championship;
+        for (const game of [ff.game1, ff.game2]) {
+            if (game.teamA?.name === oldTeam.name) game.teamA = null;
+            if (game.teamB?.name === oldTeam.name) game.teamB = null;
+            if (game.winner?.name === oldTeam.name) game.winner = null;
+        }
+        if (ch.teamA?.name === oldTeam.name) ch.teamA = null;
+        if (ch.teamB?.name === oldTeam.name) ch.teamB = null;
+        if (ch.winner?.name === oldTeam.name) ch.winner = null;
     }
 
     function updateFinalFourTeams() {
         const regions = MarchMadnessData.REGION_NAMES;
         const ff = userBracket.finalFour;
 
-        // Game 1: Region 0 winner vs Region 1 winner
         ff.game1.teamA = userBracket.regions[regions[0]]?.[3]?.[0] || null;
         ff.game1.teamB = userBracket.regions[regions[1]]?.[3]?.[0] || null;
-
-        // Game 2: Region 2 winner vs Region 3 winner
         ff.game2.teamA = userBracket.regions[regions[2]]?.[3]?.[0] || null;
         ff.game2.teamB = userBracket.regions[regions[3]]?.[3]?.[0] || null;
 
-        // Update championship teams
         userBracket.championship.teamA = ff.game1.winner || null;
         userBracket.championship.teamB = ff.game2.winner || null;
 
-        // Validate FF winners still valid
-        if (ff.game1.winner) {
-            if ((!ff.game1.teamA || ff.game1.winner.name !== ff.game1.teamA.name) &&
-                (!ff.game1.teamB || ff.game1.winner.name !== ff.game1.teamB.name)) {
-                ff.game1.winner = null;
-                userBracket.championship.teamA = null;
-            }
+        // Validate FF winners
+        if (ff.game1.winner && ff.game1.winner.name !== ff.game1.teamA?.name && ff.game1.winner.name !== ff.game1.teamB?.name) {
+            ff.game1.winner = null;
+            userBracket.championship.teamA = null;
         }
-        if (ff.game2.winner) {
-            if ((!ff.game2.teamA || ff.game2.winner.name !== ff.game2.teamA.name) &&
-                (!ff.game2.teamB || ff.game2.winner.name !== ff.game2.teamB.name)) {
-                ff.game2.winner = null;
-                userBracket.championship.teamB = null;
-            }
+        if (ff.game2.winner && ff.game2.winner.name !== ff.game2.teamA?.name && ff.game2.winner.name !== ff.game2.teamB?.name) {
+            ff.game2.winner = null;
+            userBracket.championship.teamB = null;
         }
-        if (userBracket.championship.winner) {
-            if ((!userBracket.championship.teamA || userBracket.championship.winner.name !== userBracket.championship.teamA.name) &&
-                (!userBracket.championship.teamB || userBracket.championship.winner.name !== userBracket.championship.teamB.name)) {
-                userBracket.championship.winner = null;
-            }
+        if (userBracket.championship.winner && userBracket.championship.winner.name !== userBracket.championship.teamA?.name && userBracket.championship.winner.name !== userBracket.championship.teamB?.name) {
+            userBracket.championship.winner = null;
         }
     }
 
-    // Final Four rendering
+    // ---- Final Four ----
     function renderFinalFour() {
         const gamesEl = document.getElementById('ff-games');
         const champGameEl = document.getElementById('championship-game');
@@ -391,19 +465,15 @@ const App = (() => {
         const ff = userBracket.finalFour;
         const regions = MarchMadnessData.REGION_NAMES;
 
-        // Game 1
         gamesEl.appendChild(createFFGame(ff.game1, `${regions[0]} vs ${regions[1]}`, 'ff1'));
-        // Game 2
         gamesEl.appendChild(createFFGame(ff.game2, `${regions[2]} vs ${regions[3]}`, 'ff2'));
 
-        // Championship
         const champLabel = document.createElement('div');
-        champLabel.style.cssText = 'font-size:1.1rem;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--accent-gold);margin-bottom:8px;text-align:center;';
+        champLabel.style.cssText = 'font-size:1rem;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:var(--accent-gold);margin-bottom:6px;';
         champLabel.textContent = 'Championship';
         champGameEl.appendChild(champLabel);
         champGameEl.appendChild(createFFGame(userBracket.championship, 'National Championship', 'champ'));
 
-        // Champion display
         const champDisplay = document.getElementById('champion-display');
         if (userBracket.championship.winner) {
             champDisplay.style.display = 'block';
@@ -419,134 +489,123 @@ const App = (() => {
         container.className = 'ff-game';
 
         const labelEl = document.createElement('div');
-        labelEl.style.cssText = 'text-align:center;font-size:0.7rem;font-weight:700;color:var(--text-muted);padding:6px 8px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border);';
+        labelEl.className = 'ff-label';
         labelEl.textContent = label;
         container.appendChild(labelEl);
 
-        // Team A
-        const slotA = document.createElement('div');
-        slotA.className = 'team-slot';
-        if (!game.teamA) {
-            slotA.classList.add('empty');
-            slotA.innerHTML = '<span class="team-name">TBD</span>';
-        } else {
-            if (game.winner?.name === game.teamA.name) slotA.classList.add('winner');
-            if (game.winner && game.winner.name !== game.teamA.name) slotA.classList.add('eliminated');
-            slotA.innerHTML = `<span class="team-seed">${game.teamA.seed}</span><span class="team-name">${game.teamA.name}</span>`;
-            if (game.teamB) {
-                const prob = PredictionEngine.getWinProbability(game.teamA, game.teamB);
-                const pct = (prob * 100).toFixed(0);
-                const cls = prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot';
-                slotA.innerHTML += `<span class="team-prob ${cls}">${pct}%</span>`;
-            }
-            slotA.addEventListener('click', () => {
-                selectFFWinner(id, game.teamA);
-            });
-        }
-        slotA.style.borderBottom = '1px solid var(--border)';
-        container.appendChild(slotA);
+        for (const [team, isA] of [[game.teamA, true], [game.teamB, false]]) {
+            const slot = document.createElement('div');
+            slot.className = 'team-slot';
+            if (isA) slot.style.borderBottom = '1px solid var(--border)';
 
-        // Team B
-        const slotB = document.createElement('div');
-        slotB.className = 'team-slot';
-        if (!game.teamB) {
-            slotB.classList.add('empty');
-            slotB.innerHTML = '<span class="team-name">TBD</span>';
-        } else {
-            if (game.winner?.name === game.teamB.name) slotB.classList.add('winner');
-            if (game.winner && game.winner.name !== game.teamB.name) slotB.classList.add('eliminated');
-            slotB.innerHTML = `<span class="team-seed">${game.teamB.seed}</span><span class="team-name">${game.teamB.name}</span>`;
-            if (game.teamA) {
-                const prob = PredictionEngine.getWinProbability(game.teamB, game.teamA);
-                const pct = (prob * 100).toFixed(0);
-                const cls = prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot';
-                slotB.innerHTML += `<span class="team-prob ${cls}">${pct}%</span>`;
-            }
-            slotB.addEventListener('click', () => {
-                selectFFWinner(id, game.teamB);
-            });
-        }
-        container.appendChild(slotB);
+            if (!team) {
+                slot.classList.add('empty');
+                slot.innerHTML = '<span class="team-name">TBD</span>';
+                slot.setAttribute('tabindex', '-1');
+            } else {
+                if (game.winner?.name === team.name) slot.classList.add('winner');
+                if (game.winner && game.winner.name !== team.name) slot.classList.add('eliminated');
+                slot.setAttribute('tabindex', '0');
+                slot.setAttribute('role', 'button');
+                slot.setAttribute('aria-label', `${team.name}, seed ${team.seed}`);
 
+                slot.innerHTML = `<span class="team-seed">${team.seed}</span><span class="team-name">${team.name}</span>`;
+
+                const other = isA ? game.teamB : game.teamA;
+                if (other) {
+                    const prob = PredictionEngine.getWinProbability(team, other);
+                    const pct = (prob * 100).toFixed(0);
+                    const cls = prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot';
+                    slot.innerHTML += `<span class="team-prob ${cls}">${pct}%</span>`;
+                }
+
+                const handleClick = () => selectFFWinner(id, team);
+                slot.addEventListener('click', handleClick);
+                slot.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); }
+                });
+            }
+            container.appendChild(slot);
+        }
         return container;
     }
 
     function selectFFWinner(gameId, team) {
+        pushUndoState();
         playClick();
         const ff = userBracket.finalFour;
-        const champ = userBracket.championship;
+        const ch = userBracket.championship;
 
         if (gameId === 'ff1') {
             const old = ff.game1.winner;
             ff.game1.winner = team;
-            champ.teamA = team;
-            if (old && old.name !== team.name && champ.winner?.name === old.name) {
-                champ.winner = null;
-            }
+            ch.teamA = team;
+            if (old && old.name !== team.name && ch.winner?.name === old.name) ch.winner = null;
         } else if (gameId === 'ff2') {
             const old = ff.game2.winner;
             ff.game2.winner = team;
-            champ.teamB = team;
-            if (old && old.name !== team.name && champ.winner?.name === old.name) {
-                champ.winner = null;
-            }
+            ch.teamB = team;
+            if (old && old.name !== team.name && ch.winner?.name === old.name) ch.winner = null;
         } else if (gameId === 'champ') {
-            champ.winner = team;
+            ch.winner = team;
             playChampion();
             launchConfetti();
         }
 
         renderFinalFour();
         updateProgress();
-        saveBracket();
+        if (settings.autosave) saveBracket();
     }
 
-    // Controls
+    // ---- Controls ----
     function setupControls() {
         document.getElementById('btn-reset').addEventListener('click', () => {
             if (confirm('Reset entire bracket? This cannot be undone.')) {
+                pushUndoState();
                 initUserBracket();
-                renderBracket();
-                renderFinalFour();
-                updateProgress();
-                saveBracket();
-                showRegion(activeRegion);
+                refreshAll();
                 showToast('Bracket reset');
             }
         });
 
         document.getElementById('btn-randomize').addEventListener('click', () => {
+            pushUndoState();
             randomizeBracket();
             showToast('Bracket randomized!');
         });
 
         document.getElementById('btn-autofill').addEventListener('click', () => {
+            pushUndoState();
             autoFillBracket();
-            showToast('Bracket auto-filled with probable picks');
+            showToast('Auto-filled with most probable picks');
         });
+
+        document.getElementById('btn-copy-bot').addEventListener('click', () => {
+            pushUndoState();
+            copyBotBracket();
+            showToast('Bot bracket copied!');
+        });
+
+        document.getElementById('btn-undo').addEventListener('click', undo);
+        document.getElementById('btn-redo').addEventListener('click', redo);
+
+        document.getElementById('btn-print').addEventListener('click', () => window.print());
+
+        updateUndoButtons();
     }
 
     function randomizeBracket() {
         initUserBracket();
-
         for (const regionName of MarchMadnessData.REGION_NAMES) {
-            const teams = tournamentData.regions[regionName];
-            const ordered = MarchMadnessData.getTeamsInBracketOrder(teams);
+            const ordered = MarchMadnessData.getTeamsInBracketOrder(tournamentData.regions[regionName]);
             const rounds = userBracket.regions[regionName];
-
-            // Round 1
             for (let m = 0; m < 8; m++) {
-                const tA = ordered[m * 2];
-                const tB = ordered[m * 2 + 1];
-                const prob = PredictionEngine.getWinProbability(tA, tB);
-                rounds[0][m] = Math.random() < prob ? tA : tB;
+                const prob = PredictionEngine.getWinProbability(ordered[m * 2], ordered[m * 2 + 1]);
+                rounds[0][m] = Math.random() < prob ? ordered[m * 2] : ordered[m * 2 + 1];
             }
-
-            // Rounds 2-4
             for (let r = 1; r < 4; r++) {
                 for (let m = 0; m < rounds[r].length; m++) {
-                    const tA = rounds[r - 1][m * 2];
-                    const tB = rounds[r - 1][m * 2 + 1];
+                    const tA = rounds[r - 1][m * 2], tB = rounds[r - 1][m * 2 + 1];
                     if (tA && tB) {
                         const prob = PredictionEngine.getWinProbability(tA, tB);
                         rounds[r][m] = Math.random() < prob ? tA : tB;
@@ -554,10 +613,7 @@ const App = (() => {
                 }
             }
         }
-
         updateFinalFourTeams();
-
-        // Final Four
         const ff = userBracket.finalFour;
         if (ff.game1.teamA && ff.game1.teamB) {
             const p = PredictionEngine.getWinProbability(ff.game1.teamA, ff.game1.teamB);
@@ -573,36 +629,23 @@ const App = (() => {
             const p = PredictionEngine.getWinProbability(userBracket.championship.teamA, userBracket.championship.teamB);
             userBracket.championship.winner = Math.random() < p ? userBracket.championship.teamA : userBracket.championship.teamB;
         }
-
-        renderBracket();
-        renderFinalFour();
-        updateProgress();
-        saveBracket();
-        showRegion(activeRegion);
+        refreshAll();
     }
 
     function autoFillBracket() {
         for (const regionName of MarchMadnessData.REGION_NAMES) {
-            const teams = tournamentData.regions[regionName];
-            const ordered = MarchMadnessData.getTeamsInBracketOrder(teams);
+            const ordered = MarchMadnessData.getTeamsInBracketOrder(tournamentData.regions[regionName]);
             const rounds = userBracket.regions[regionName];
-
-            // Round 1 - fill empty
             for (let m = 0; m < 8; m++) {
                 if (!rounds[0][m]) {
-                    const tA = ordered[m * 2];
-                    const tB = ordered[m * 2 + 1];
-                    const prob = PredictionEngine.getWinProbability(tA, tB);
-                    rounds[0][m] = prob >= 0.5 ? tA : tB;
+                    const prob = PredictionEngine.getWinProbability(ordered[m * 2], ordered[m * 2 + 1]);
+                    rounds[0][m] = prob >= 0.5 ? ordered[m * 2] : ordered[m * 2 + 1];
                 }
             }
-
-            // Rounds 2-4
             for (let r = 1; r < 4; r++) {
                 for (let m = 0; m < rounds[r].length; m++) {
                     if (!rounds[r][m]) {
-                        const tA = rounds[r - 1][m * 2];
-                        const tB = rounds[r - 1][m * 2 + 1];
+                        const tA = rounds[r - 1][m * 2], tB = rounds[r - 1][m * 2 + 1];
                         if (tA && tB) {
                             const prob = PredictionEngine.getWinProbability(tA, tB);
                             rounds[r][m] = prob >= 0.5 ? tA : tB;
@@ -611,38 +654,50 @@ const App = (() => {
                 }
             }
         }
-
         updateFinalFourTeams();
-
         const ff = userBracket.finalFour;
         if (!ff.game1.winner && ff.game1.teamA && ff.game1.teamB) {
-            const p = PredictionEngine.getWinProbability(ff.game1.teamA, ff.game1.teamB);
-            ff.game1.winner = p >= 0.5 ? ff.game1.teamA : ff.game1.teamB;
+            ff.game1.winner = PredictionEngine.getWinProbability(ff.game1.teamA, ff.game1.teamB) >= 0.5 ? ff.game1.teamA : ff.game1.teamB;
             userBracket.championship.teamA = ff.game1.winner;
         }
         if (!ff.game2.winner && ff.game2.teamA && ff.game2.teamB) {
-            const p = PredictionEngine.getWinProbability(ff.game2.teamA, ff.game2.teamB);
-            ff.game2.winner = p >= 0.5 ? ff.game2.teamA : ff.game2.teamB;
+            ff.game2.winner = PredictionEngine.getWinProbability(ff.game2.teamA, ff.game2.teamB) >= 0.5 ? ff.game2.teamA : ff.game2.teamB;
             userBracket.championship.teamB = ff.game2.winner;
         }
         if (!userBracket.championship.winner && userBracket.championship.teamA && userBracket.championship.teamB) {
-            const p = PredictionEngine.getWinProbability(userBracket.championship.teamA, userBracket.championship.teamB);
-            userBracket.championship.winner = p >= 0.5 ? userBracket.championship.teamA : userBracket.championship.teamB;
+            userBracket.championship.winner = PredictionEngine.getWinProbability(userBracket.championship.teamA, userBracket.championship.teamB) >= 0.5 ? userBracket.championship.teamA : userBracket.championship.teamB;
         }
-
-        renderBracket();
-        renderFinalFour();
-        updateProgress();
-        saveBracket();
-        showRegion(activeRegion);
+        refreshAll();
     }
 
-    // Progress tracking
+    function copyBotBracket() {
+        initUserBracket();
+        for (const regionName of MarchMadnessData.REGION_NAMES) {
+            const botRegion = botBracket[regionName];
+            let gameIdx = 0;
+            const matchupsPerRound = [8, 4, 2, 1];
+            for (let r = 0; r < 4; r++) {
+                for (let m = 0; m < matchupsPerRound[r]; m++) {
+                    userBracket.regions[regionName][r][m] = botRegion.games[gameIdx].winner;
+                    gameIdx++;
+                }
+            }
+        }
+        updateFinalFourTeams();
+        const ff = userBracket.finalFour;
+        ff.game1.winner = botBracket.finalFour.game1.winner;
+        userBracket.championship.teamA = ff.game1.winner;
+        ff.game2.winner = botBracket.finalFour.game2.winner;
+        userBracket.championship.teamB = ff.game2.winner;
+        userBracket.championship.winner = botBracket.championship.winner;
+        refreshAll();
+    }
+
+    // ---- Progress ----
     function updateProgress() {
         let count = 0;
         for (const regionName of MarchMadnessData.REGION_NAMES) {
-            const rounds = userBracket.regions[regionName];
-            for (const round of rounds) {
+            for (const round of userBracket.regions[regionName]) {
                 count += round.filter(w => w !== null).length;
             }
         }
@@ -652,37 +707,46 @@ const App = (() => {
 
         totalPicks = count;
         const pct = (count / TOTAL_GAMES) * 100;
-        document.getElementById('progress-fill').style.width = `${pct}%`;
-        document.getElementById('progress-text').textContent = `${count} / ${TOTAL_GAMES}`;
+        const bar = document.getElementById('progress-fill');
+        const text = document.getElementById('progress-text');
+        bar.style.width = `${pct}%`;
+        bar.parentElement.setAttribute('aria-valuenow', count);
+        text.textContent = `${count} / ${TOTAL_GAMES}`;
     }
 
-    // Tooltip
+    // ---- Tooltip ----
     function showTooltip(e, teamA, teamB) {
         const tip = document.getElementById('tooltip');
         const insight = PredictionEngine.getMatchupInsight(teamA, teamB);
 
         tip.querySelector('.tip-matchup').textContent = `(${teamA.seed}) ${teamA.name} vs (${teamB.seed}) ${teamB.name}`;
-        tip.querySelector('.tip-prob').textContent = `${insight.favorite.name} favored: ${(insight.probability * 100).toFixed(1)}%`;
+        tip.querySelector('.tip-prob').textContent = `${insight.favorite.name}: ${(insight.probability * 100).toFixed(1)}% (CI: ${(insight.ci.low * 100).toFixed(0)}%-${(insight.ci.high * 100).toFixed(0)}%)`;
+        tip.querySelector('.tip-record').textContent = insight.historicalRecord ? `Historical: ${insight.historicalRecord}` : '';
         tip.querySelector('.tip-note').textContent = insight.historicalNote || insight.insight;
 
-        tip.style.left = `${Math.min(e.clientX + 12, window.innerWidth - 300)}px`;
-        tip.style.top = `${Math.min(e.clientY + 12, window.innerHeight - 120)}px`;
+        const rect = (e.target || e.currentTarget).getBoundingClientRect();
+        tip.style.left = `${Math.min(rect.right + 8, window.innerWidth - 310)}px`;
+        tip.style.top = `${Math.min(rect.top, window.innerHeight - 120)}px`;
         tip.classList.add('visible');
+        tip.setAttribute('aria-hidden', 'false');
     }
 
     function hideTooltip() {
-        document.getElementById('tooltip').classList.remove('visible');
+        const tip = document.getElementById('tooltip');
+        tip.classList.remove('visible');
+        tip.setAttribute('aria-hidden', 'true');
     }
 
-    // Toast
+    // ---- Toast ----
     function showToast(msg) {
         const toast = document.getElementById('toast');
         toast.textContent = msg;
         toast.classList.add('visible');
-        setTimeout(() => toast.classList.remove('visible'), 2500);
+        clearTimeout(toast._timeout);
+        toast._timeout = setTimeout(() => toast.classList.remove('visible'), 2500);
     }
 
-    // Confetti
+    // ---- Confetti ----
     function launchConfetti() {
         const container = document.getElementById('confetti-container');
         const colors = ['#ff6b35', '#4ecdc4', '#ffd700', '#a855f7', '#22c55e', '#ef4444'];
@@ -701,12 +765,10 @@ const App = (() => {
         setTimeout(() => { container.innerHTML = ''; }, 4000);
     }
 
-    // Render Bot Bracket
+    // ---- Bot Bracket ----
     function renderBotBracket() {
         const grid = document.getElementById('bot-picks-grid');
         grid.innerHTML = '';
-
-        const roundNames = ['R64', 'R32', 'S16', 'E8'];
 
         for (const regionName of MarchMadnessData.REGION_NAMES) {
             const card = document.createElement('div');
@@ -720,119 +782,105 @@ const App = (() => {
             for (const game of regionData.games) {
                 const row = document.createElement('div');
                 row.className = 'bot-pick-row';
+                row.style.cursor = 'pointer';
+                row.setAttribute('tabindex', '0');
+                row.setAttribute('role', 'button');
+                row.setAttribute('aria-label', `${game.winner.name} over ${game.winner === game.teamA ? game.teamB.name : game.teamA.name}`);
 
-                const roundEl = document.createElement('span');
-                roundEl.className = 'bot-pick-round';
-                roundEl.textContent = roundNames[game.round - 1];
+                const loser = game.winner === game.teamA ? game.teamB : game.teamA;
+                row.innerHTML = `
+                    <span class="bot-pick-round">${MarchMadnessData.ROUND_SHORT[game.round - 1]}</span>
+                    <span class="bot-pick-winner" style="${game.isUpset ? 'color:var(--accent-orange)' : ''}">(${game.winner.seed}) ${game.winner.name}</span>
+                    <span class="bot-pick-vs">over (${loser.seed}) ${loser.name}</span>
+                    <span class="bot-pick-prob" style="color:${game.probability >= 0.7 ? 'var(--safe)' : game.probability >= 0.45 ? 'var(--moderate)' : 'var(--risky)'}">${(game.probability * 100).toFixed(0)}%</span>
+                    <div class="bot-pick-explain">${game.explanation}</div>
+                `;
 
-                const winnerEl = document.createElement('span');
-                winnerEl.className = 'bot-pick-winner';
-                winnerEl.textContent = `(${game.winner.seed}) ${game.winner.name}`;
-                if (game.isUpset) winnerEl.style.color = 'var(--accent-orange)';
-
-                const vsEl = document.createElement('span');
-                vsEl.style.cssText = 'font-size:0.65rem;color:var(--text-muted);';
-                vsEl.textContent = `over (${game.winner === game.teamA ? game.teamB.seed : game.teamA.seed}) ${game.winner === game.teamA ? game.teamB.name : game.teamA.name}`;
-
-                const probEl = document.createElement('span');
-                probEl.className = 'bot-pick-prob';
-                probEl.textContent = `${(game.probability * 100).toFixed(0)}%`;
-                probEl.style.color = game.probability >= 0.7 ? 'var(--safe)' : game.probability >= 0.45 ? 'var(--moderate)' : 'var(--danger)';
-
-                row.appendChild(roundEl);
-                row.appendChild(winnerEl);
-                row.appendChild(vsEl);
-                row.appendChild(probEl);
+                const toggle = () => row.classList.toggle('expanded');
+                row.addEventListener('click', toggle);
+                row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
                 card.appendChild(row);
             }
 
-            // Region champion
             const champRow = document.createElement('div');
-            champRow.style.cssText = 'margin-top:8px;padding-top:8px;border-top:1px solid var(--border);text-align:center;font-weight:700;color:var(--accent-gold);font-size:0.85rem;';
+            champRow.style.cssText = 'margin-top:6px;padding-top:6px;border-top:1px solid var(--border);text-align:center;font-weight:700;color:var(--accent-gold);font-size:0.82rem;';
             champRow.textContent = `Region Winner: (${regionData.champion.seed}) ${regionData.champion.name}`;
             card.appendChild(champRow);
 
             grid.appendChild(card);
         }
 
-        // Bot Final Four display
+        // Bot Final Four
         const ffDisplay = document.getElementById('bot-ff-display');
         ffDisplay.innerHTML = '';
+
         const ffGames = document.createElement('div');
         ffGames.className = 'final-four-games';
 
-        const g1 = botBracket.finalFour.game1;
-        const g2 = botBracket.finalFour.game2;
-        const ch = botBracket.championship;
-
-        ffGames.innerHTML = `
-            <div class="ff-game">
-                <div style="text-align:center;font-size:0.7rem;font-weight:700;color:var(--text-muted);padding:6px;border-bottom:1px solid var(--border);">SEMIFINAL 1</div>
-                <div class="team-slot ${g1.winner.name === g1.teamA.name ? 'winner' : 'eliminated'}" style="border-bottom:1px solid var(--border);">
-                    <span class="team-seed">${g1.teamA.seed}</span><span class="team-name">${g1.teamA.name}</span>
+        for (const [game, label] of [[botBracket.finalFour.game1, 'Semifinal 1'], [botBracket.finalFour.game2, 'Semifinal 2']]) {
+            const el = document.createElement('div');
+            el.className = 'ff-game';
+            el.innerHTML = `
+                <div class="ff-label">${label}</div>
+                <div class="team-slot ${game.winner.name === game.teamA.name ? 'winner' : 'eliminated'}" style="border-bottom:1px solid var(--border)">
+                    <span class="team-seed">${game.teamA.seed}</span><span class="team-name">${game.teamA.name}</span>
                 </div>
-                <div class="team-slot ${g1.winner.name === g1.teamB.name ? 'winner' : 'eliminated'}">
-                    <span class="team-seed">${g1.teamB.seed}</span><span class="team-name">${g1.teamB.name}</span>
+                <div class="team-slot ${game.winner.name === game.teamB.name ? 'winner' : 'eliminated'}">
+                    <span class="team-seed">${game.teamB.seed}</span><span class="team-name">${game.teamB.name}</span>
                 </div>
-            </div>
-            <div class="ff-game">
-                <div style="text-align:center;font-size:0.7rem;font-weight:700;color:var(--text-muted);padding:6px;border-bottom:1px solid var(--border);">SEMIFINAL 2</div>
-                <div class="team-slot ${g2.winner.name === g2.teamA.name ? 'winner' : 'eliminated'}" style="border-bottom:1px solid var(--border);">
-                    <span class="team-seed">${g2.teamA.seed}</span><span class="team-name">${g2.teamA.name}</span>
-                </div>
-                <div class="team-slot ${g2.winner.name === g2.teamB.name ? 'winner' : 'eliminated'}">
-                    <span class="team-seed">${g2.teamB.seed}</span><span class="team-name">${g2.teamB.name}</span>
-                </div>
-            </div>
-        `;
+            `;
+            ffGames.appendChild(el);
+        }
         ffDisplay.appendChild(ffGames);
 
+        const ch = botBracket.championship;
         const champDiv = document.createElement('div');
         champDiv.className = 'champion-display';
-        champDiv.style.marginTop = '16px';
+        champDiv.style.marginTop = '14px';
         champDiv.innerHTML = `
             <div class="label">Bot's National Champion</div>
             <div class="champ-name">${ch.winner.name}</div>
-            <div class="champ-seed">#${ch.winner.seed} Seed — ${(ch.probability * 100).toFixed(1)}% win probability</div>
+            <div class="champ-seed">#${ch.winner.seed} Seed &mdash; ${(ch.probability * 100).toFixed(1)}% win probability</div>
         `;
         ffDisplay.appendChild(champDiv);
     }
 
-    // Render Analysis
+    // ---- Analysis ----
     function renderAnalysis() {
         const container = document.getElementById('analysis-content');
 
         if (totalPicks < 1) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <div class="icon">📊</div>
-                    <h3>Fill in your bracket first</h3>
-                    <p>Complete at least a few picks in "My Bracket" to see your analysis.</p>
-                </div>`;
+            container.innerHTML = '<div class="empty-state"><div class="icon">📊</div><h3>Fill in your bracket first</h3><p>Complete at least a few picks to see your analysis.</p></div>';
             return;
         }
 
         const analysis = PredictionEngine.analyzeUserBracket(userBracket, tournamentData);
-
-        const riskColor = analysis.bracketScore >= 70 ? 'var(--safe)' : analysis.bracketScore >= 40 ? 'var(--moderate)' : 'var(--danger)';
         const riskMeterClass = analysis.bracketScore >= 70 ? 'safe' : analysis.bracketScore >= 40 ? 'moderate' : 'risky';
+        const riskColor = analysis.bracketScore >= 70 ? 'var(--safe)' : analysis.bracketScore >= 40 ? 'var(--moderate)' : 'var(--risky)';
+
+        const scoringName = MarchMadnessData.SCORING_SYSTEMS[settings.scoring]?.name || 'Standard';
+        const expectedPts = analysis.expectedPoints[settings.scoring] || 0;
 
         container.innerHTML = `
             <div class="analysis-grid">
                 <div class="analysis-card">
                     <h3>Bracket Score</h3>
-                    <div style="text-align:center;padding:10px 0;">
+                    <div style="text-align:center;padding:8px 0;">
                         <div class="stat-value score">${analysis.bracketScore.toFixed(1)}</div>
-                        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;">out of 100 (higher = more probable)</div>
+                        <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">out of 100 (higher = more probable)</div>
                     </div>
                     <div class="meter"><div class="meter-fill ${riskMeterClass}" style="width:${analysis.bracketScore}%"></div></div>
-                    <div class="stat-row" style="margin-top:12px;">
+                    <div class="stat-row" style="margin-top:10px;">
+                        <span class="stat-label">Percentile</span>
+                        <span class="stat-value" style="font-size:0.85rem;color:var(--accent-gold);">Top ${100 - analysis.percentile}%</span>
+                    </div>
+                    <div class="stat-row">
                         <span class="stat-label">Overall Probability</span>
-                        <span class="stat-value" style="font-size:0.85rem;">${analysis.overallProbability.toExponential(2)}</span>
+                        <span class="stat-value" style="font-size:0.8rem;">${analysis.overallProbability.toExponential(2)}</span>
                     </div>
                     <div class="stat-row">
                         <span class="stat-label">Picks Made</span>
-                        <span class="stat-value" style="font-size:0.85rem;">${analysis.totalFilled} / ${TOTAL_GAMES}</span>
+                        <span class="stat-value" style="font-size:0.8rem;">${analysis.totalFilled} / ${TOTAL_GAMES}</span>
                     </div>
                 </div>
 
@@ -840,150 +888,128 @@ const App = (() => {
                     <h3>Risk Profile</h3>
                     <div class="stat-row">
                         <span class="stat-label">Risk Level</span>
-                        <span class="stat-value" style="font-size:0.9rem;color:${riskColor};">${analysis.riskLevel}</span>
+                        <span class="stat-value" style="font-size:0.85rem;color:${riskColor};">${analysis.riskLevel}</span>
                     </div>
                     <div class="stat-row">
                         <span class="stat-label">Total Upsets</span>
-                        <span class="stat-value" style="font-size:0.9rem;">${analysis.upsetCount}</span>
+                        <span class="stat-value" style="font-size:0.85rem;">${analysis.upsetCount} <span style="font-size:0.65rem;color:var(--text-muted);">(avg: ~8-10)</span></span>
                     </div>
                     <div class="stat-row">
-                        <span class="stat-label">Safe Picks (>70%)</span>
-                        <span class="stat-value" style="font-size:0.9rem;color:var(--safe);">${analysis.picks.filter(p => p.riskCategory === 'safe').length}</span>
+                        <span class="stat-label">Safe Picks (&gt;70%)</span>
+                        <span class="stat-value" style="font-size:0.85rem;color:var(--safe);">${analysis.picks.filter(p => p.riskCategory === 'safe').length}</span>
                     </div>
                     <div class="stat-row">
                         <span class="stat-label">Moderate (45-70%)</span>
-                        <span class="stat-value" style="font-size:0.9rem;color:var(--moderate);">${analysis.picks.filter(p => p.riskCategory === 'moderate').length}</span>
+                        <span class="stat-value" style="font-size:0.85rem;color:var(--moderate);">${analysis.picks.filter(p => p.riskCategory === 'moderate').length}</span>
                     </div>
                     <div class="stat-row">
-                        <span class="stat-label">Risky (<45%)</span>
-                        <span class="stat-value" style="font-size:0.9rem;color:var(--danger);">${analysis.picks.filter(p => p.riskCategory === 'risky').length + analysis.picks.filter(p => p.riskCategory === 'longshot').length}</span>
+                        <span class="stat-label">Risky (&lt;45%)</span>
+                        <span class="stat-value" style="font-size:0.85rem;color:var(--risky);">${analysis.picks.filter(p => p.riskCategory === 'risky' || p.riskCategory === 'longshot').length}</span>
+                    </div>
+                    <div class="stat-row" style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
+                        <span class="stat-label">Expected Points (${scoringName})</span>
+                        <span class="stat-value" style="font-size:0.95rem;color:var(--accent-gold);">${expectedPts}</span>
                     </div>
                 </div>
 
                 <div class="analysis-card full-width">
                     <h3>Suggestions</h3>
-                    ${analysis.suggestions.length === 0 ? '<p style="color:var(--text-secondary);font-size:0.82rem;">No suggestions yet — keep filling in your bracket!</p>' :
+                    ${analysis.suggestions.length === 0 ? '<p style="color:var(--text-secondary);font-size:0.8rem;">No suggestions yet — keep filling in your bracket!</p>' :
                     analysis.suggestions.map(s => `
                         <div class="suggestion-item ${s.type}">
-                            <span class="suggestion-icon">${s.type === 'risk' ? '⚠' : s.type === 'strategy' ? '💡' : 'ℹ'}</span>
-                            <span class="suggestion-text">${s.message}</span>
+                            <span class="suggestion-icon">${s.type === 'risk' ? (s.severity === 'high' ? '!!' : '!') : s.type === 'strategy' ? '*' : 'i'}</span>
+                            <span class="suggestion-text">${s.message}${s.probImprovement ? ` <strong>(${s.probImprovement})</strong>` : ''}</span>
                         </div>
                     `).join('')}
                 </div>
 
                 <div class="analysis-card full-width">
-                    <h3>All Picks by Risk</h3>
+                    <h3>All Picks by Risk (${analysis.totalFilled} picks)</h3>
                     <div class="pick-list">
-                        ${analysis.picks.sort((a, b) => a.probability - b.probability).map(p => {
-                            const roundNames = { 1: 'R64', 2: 'R32', 3: 'S16', 4: 'E8', 5: 'FF', 6: 'CH' };
-                            return `
-                            <div class="pick-item">
-                                <span class="round-badge">${roundNames[p.round]}</span>
+                        ${analysis.picks.sort((a, b) => a.probability - b.probability).map(p => `
+                            <div class="pick-item" title="${p.explanation}">
+                                <span class="round-badge">${MarchMadnessData.ROUND_SHORT[p.round - 1]}</span>
                                 <span style="font-weight:600;">(${p.winner.seed}) ${p.winner.name}</span>
                                 <span class="vs-text">over (${p.loser.seed}) ${p.loser.name}</span>
                                 <span class="prob-badge ${p.riskCategory}">${(p.probability * 100).toFixed(1)}%</span>
-                            </div>`;
-                        }).join('')}
+                            </div>
+                        `).join('')}
                     </div>
                 </div>
             </div>
         `;
     }
 
-    // Render Head to Head
+    // ---- Head to Head ----
     function renderH2H() {
         const container = document.getElementById('h2h-content');
 
         if (totalPicks < 1) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <div class="icon">⚔</div>
-                    <h3>Make your picks first</h3>
-                    <p>Fill in your bracket to compare it against the bot's predictions.</p>
-                </div>`;
+            container.innerHTML = '<div class="empty-state"><div class="icon">&#9876;</div><h3>Make your picks first</h3><p>Fill in your bracket to compare against the bot.</p></div>';
             return;
         }
 
-        // Compare user vs bot picks
-        let matches = 0;
-        let diffs = 0;
+        let matches = 0, diffs = 0;
         const comparisons = [];
 
         for (const regionName of MarchMadnessData.REGION_NAMES) {
             const userRounds = userBracket.regions[regionName];
             const botGames = botBracket[regionName].games;
-
             let botIdx = 0;
             for (let r = 0; r < 4; r++) {
                 for (let m = 0; m < userRounds[r].length; m++) {
                     const userPick = userRounds[r][m];
                     const botGame = botGames[botIdx];
                     botIdx++;
-
                     if (userPick) {
                         const match = botGame.winner.name === userPick.name;
-                        if (match) matches++;
-                        else diffs++;
-                        comparisons.push({
-                            round: r + 1,
-                            region: regionName,
-                            userPick,
-                            botPick: botGame.winner,
-                            match
-                        });
+                        match ? matches++ : diffs++;
+                        comparisons.push({ round: r + 1, region: regionName, userPick, botPick: botGame.winner, match });
                     }
                 }
             }
         }
 
-        // Final Four comparison
-        if (userBracket.finalFour.game1.winner) {
-            const m = botBracket.finalFour.game1.winner.name === userBracket.finalFour.game1.winner.name;
-            if (m) matches++; else diffs++;
-            comparisons.push({ round: 5, region: 'FF', userPick: userBracket.finalFour.game1.winner, botPick: botBracket.finalFour.game1.winner, match: m });
-        }
-        if (userBracket.finalFour.game2.winner) {
-            const m = botBracket.finalFour.game2.winner.name === userBracket.finalFour.game2.winner.name;
-            if (m) matches++; else diffs++;
-            comparisons.push({ round: 5, region: 'FF', userPick: userBracket.finalFour.game2.winner, botPick: botBracket.finalFour.game2.winner, match: m });
+        for (const [game, botGame] of [[userBracket.finalFour.game1, botBracket.finalFour.game1], [userBracket.finalFour.game2, botBracket.finalFour.game2]]) {
+            if (game.winner) {
+                const m = botGame.winner.name === game.winner.name;
+                m ? matches++ : diffs++;
+                comparisons.push({ round: 5, region: 'FF', userPick: game.winner, botPick: botGame.winner, match: m });
+            }
         }
         if (userBracket.championship.winner) {
             const m = botBracket.championship.winner.name === userBracket.championship.winner.name;
-            if (m) matches++; else diffs++;
-            comparisons.push({ round: 6, region: 'Champ', userPick: userBracket.championship.winner, botPick: botBracket.championship.winner, match: m });
+            m ? matches++ : diffs++;
+            comparisons.push({ round: 6, region: 'CH', userPick: userBracket.championship.winner, botPick: botBracket.championship.winner, match: m });
         }
 
         const total = matches + diffs;
         const agreePct = total > 0 ? ((matches / total) * 100).toFixed(0) : 0;
 
-        const roundNames = { 1: 'R64', 2: 'R32', 3: 'S16', 4: 'E8', 5: 'FF', 6: 'CH' };
-
         container.innerHTML = `
-            <div style="text-align:center;margin-bottom:16px;">
-                <div style="font-size:2rem;font-weight:900;color:var(--accent-orange);">${agreePct}%</div>
-                <div style="font-size:0.85rem;color:var(--text-secondary);">Agreement Rate (${matches} matches, ${diffs} differences)</div>
+            <div class="h2h-header">
+                <div class="pct">${agreePct}%</div>
+                <div class="label">Agreement Rate &mdash; ${matches} matches, ${diffs} differences out of ${total} picks</div>
             </div>
             <div class="h2h-container">
                 <div class="h2h-column user">
                     <h3>Your Picks</h3>
                     ${comparisons.map(c => `
                         <div class="h2h-row ${c.match ? 'match' : 'differ'}">
-                            <span class="round-badge">${roundNames[c.round]}</span>
+                            <span class="round-badge">${MarchMadnessData.ROUND_SHORT[c.round - 1]}</span>
                             <span class="h2h-pick-name">${c.userPick.name}</span>
                             <span class="h2h-pick-seed">(${c.userPick.seed})</span>
                         </div>
                     `).join('')}
                 </div>
                 <div class="h2h-diff">
-                    ${comparisons.map(c => `
-                        <div class="h2h-vs">${c.match ? '=' : '≠'}</div>
-                    `).join('')}
+                    ${comparisons.map(c => `<div class="h2h-vs">${c.match ? '=' : '&#8800;'}</div>`).join('')}
                 </div>
                 <div class="h2h-column bot">
                     <h3>Bot Picks</h3>
                     ${comparisons.map(c => `
                         <div class="h2h-row ${c.match ? 'match' : 'differ'}">
-                            <span class="round-badge">${roundNames[c.round]}</span>
+                            <span class="round-badge">${MarchMadnessData.ROUND_SHORT[c.round - 1]}</span>
                             <span class="h2h-pick-name">${c.botPick.name}</span>
                             <span class="h2h-pick-seed">(${c.botPick.seed})</span>
                         </div>
@@ -993,19 +1019,254 @@ const App = (() => {
         `;
     }
 
-    // Save / Load
+    // ---- Monte Carlo Simulation ----
+    let simHasRun = false;
+    function runSimulation() {
+        const container = document.getElementById('simulate-content');
+
+        if (simHasRun && mcResults) {
+            renderSimResults(container);
+            return;
+        }
+
+        container.innerHTML = '<div class="empty-state"><div class="icon">&#127922;</div><h3>Running 5,000 Simulations...</h3><div class="loading-spinner" style="margin:16px auto;"></div></div>';
+
+        // Run in next frame to allow UI to update
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                mcResults = PredictionEngine.monteCarloSimulate(tournamentData, 5000);
+                simHasRun = true;
+                renderSimResults(container);
+            }, 50);
+        });
+    }
+
+    function renderSimResults(container) {
+        // Sort by championship probability
+        const sorted = Object.values(mcResults).sort((a, b) => b.championshipProb - a.championshipProb);
+        const top = sorted.slice(0, 20);
+        const maxChamp = top[0]?.championshipProb || 0.01;
+
+        const roundHeaders = ['R64', 'R32', 'S16', 'E8', 'FF', 'Champ', 'Win'];
+
+        let html = `
+            <div class="analysis-card full-width" style="margin-bottom:14px;">
+                <h3>Monte Carlo Championship Probabilities (5,000 simulations)</h3>
+                <p style="font-size:0.76rem;color:var(--text-secondary);margin-bottom:12px;">Each team's probability of winning the national championship, calculated by simulating the entire tournament 5,000 times with randomized outcomes weighted by the prediction model.</p>
+                ${top.map(t => `
+                    <div class="mc-bar">
+                        <span class="bar-label">(${t.team.seed}) ${t.team.name}</span>
+                        <div style="flex:1;background:var(--bg-input);border-radius:4px;overflow:hidden;">
+                            <div class="bar-fill" style="width:${(t.championshipProb / maxChamp) * 100}%"></div>
+                        </div>
+                        <span class="bar-pct">${(t.championshipProb * 100).toFixed(1)}%</span>
+                    </div>
+                `).join('')}
+            </div>
+
+            <div class="analysis-card full-width">
+                <h3>Full Round-by-Round Probabilities (Top 20)</h3>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:0.75rem;">
+                        <thead>
+                            <tr style="border-bottom:1px solid var(--border);">
+                                <th style="text-align:left;padding:4px 6px;color:var(--text-muted);font-size:0.65rem;">TEAM</th>
+                                ${roundHeaders.map(r => `<th style="text-align:center;padding:4px 4px;color:var(--text-muted);font-size:0.65rem;">${r}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${top.map(t => `
+                                <tr style="border-bottom:1px solid rgba(128,128,128,0.05);">
+                                    <td style="padding:4px 6px;font-weight:600;white-space:nowrap;">(${t.team.seed}) ${t.team.name}</td>
+                                    ${t.roundReach.map((p, i) => `<td style="text-align:center;padding:4px;font-family:'JetBrains Mono',monospace;font-size:0.68rem;color:${p > 0.5 ? 'var(--safe)' : p > 0.2 ? 'var(--moderate)' : p > 0.05 ? 'var(--text-secondary)' : 'var(--text-muted)'};">${(p * 100).toFixed(1)}%</td>`).join('')}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        container.innerHTML = html;
+    }
+
+    // ---- Settings ----
+    function setupSettings() {
+        const panel = document.getElementById('settings-panel');
+        const overlay = document.getElementById('settings-overlay');
+
+        document.getElementById('btn-settings').addEventListener('click', () => {
+            panel.classList.add('open');
+            overlay.classList.add('active');
+            overlay.setAttribute('aria-hidden', 'false');
+        });
+
+        const close = () => {
+            panel.classList.remove('open');
+            overlay.classList.remove('active');
+            overlay.setAttribute('aria-hidden', 'true');
+        };
+
+        document.getElementById('btn-close-settings').addEventListener('click', close);
+        overlay.addEventListener('click', close);
+
+        // Setting toggles
+        document.getElementById('setting-dark').addEventListener('change', (e) => {
+            settings.dark = e.target.checked;
+            applySettings();
+            saveSettings();
+        });
+        document.getElementById('setting-particles').addEventListener('change', (e) => {
+            settings.particles = e.target.checked;
+            applySettings();
+            saveSettings();
+        });
+        document.getElementById('setting-probs').addEventListener('change', (e) => {
+            settings.probs = e.target.checked;
+            applySettings();
+            saveSettings();
+        });
+        document.getElementById('setting-sounds').addEventListener('change', (e) => {
+            settings.sounds = e.target.checked;
+            saveSettings();
+        });
+        document.getElementById('setting-autosave').addEventListener('change', (e) => {
+            settings.autosave = e.target.checked;
+            saveSettings();
+        });
+        document.getElementById('setting-scoring').addEventListener('change', (e) => {
+            settings.scoring = e.target.value;
+            saveSettings();
+            if (currentView === 'analysis') renderAnalysis();
+        });
+    }
+
+    function applySettings() {
+        document.documentElement.setAttribute('data-theme', settings.dark ? 'dark' : 'light');
+        document.body.setAttribute('data-particles', settings.particles ? 'on' : 'off');
+        document.body.setAttribute('data-show-probs', settings.probs ? 'on' : 'off');
+
+        // Sync toggle UI
+        const darkEl = document.getElementById('setting-dark');
+        const partEl = document.getElementById('setting-particles');
+        const probEl = document.getElementById('setting-probs');
+        const soundEl = document.getElementById('setting-sounds');
+        const saveEl = document.getElementById('setting-autosave');
+        const scorEl = document.getElementById('setting-scoring');
+        if (darkEl) darkEl.checked = settings.dark;
+        if (partEl) partEl.checked = settings.particles;
+        if (probEl) probEl.checked = settings.probs;
+        if (soundEl) soundEl.checked = settings.sounds;
+        if (saveEl) saveEl.checked = settings.autosave;
+        if (scorEl) scorEl.value = settings.scoring;
+    }
+
+    function saveSettings() {
+        try { localStorage.setItem('mm-settings', JSON.stringify(settings)); } catch (e) { /* */ }
+    }
+
+    function loadSettings() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('mm-settings'));
+            if (saved) settings = { ...settings, ...saved };
+        } catch (e) { /* */ }
+    }
+
+    // ---- Seed Legend ----
+    function setupSeedLegend() {
+        document.getElementById('btn-seed-legend').addEventListener('click', () => {
+            document.getElementById('seed-legend-modal').classList.add('active');
+            renderSeedLegend();
+        });
+        document.getElementById('btn-close-legend').addEventListener('click', () => {
+            document.getElementById('seed-legend-modal').classList.remove('active');
+        });
+        document.getElementById('seed-legend-modal').addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal-overlay')) {
+                document.getElementById('seed-legend-modal').classList.remove('active');
+            }
+        });
+    }
+
+    function renderSeedLegend() {
+        const container = document.getElementById('seed-legend-rows');
+        container.innerHTML = '';
+
+        const matchups = ['1v16', '2v15', '3v14', '4v13', '5v12', '6v11', '7v10', '8v9'];
+        for (const key of matchups) {
+            const h = MarchMadnessData.SEED_MATCHUP_HISTORY[key];
+            const hist = MarchMadnessData.ROUND1_HISTORICAL[key];
+            const row = document.createElement('div');
+            row.className = 'seed-row';
+            const pct = (hist * 100).toFixed(1);
+            row.innerHTML = `
+                <span style="font-weight:700;color:var(--accent-blue);">${key}</span>
+                <div>
+                    <div class="seed-bar" style="width:${pct}%;max-width:100%;"></div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">${h?.note || ''}</div>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;">${h ? h.wins + '-' + h.losses : ''}</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;font-weight:700;color:var(--safe);">${pct}%</span>
+            `;
+            container.appendChild(row);
+        }
+    }
+
+    // ---- Onboarding ----
+    function setupOnboarding() {
+        const onboarding = document.getElementById('onboarding');
+        const seen = localStorage.getItem('mm-onboarding-seen');
+        if (!seen) {
+            onboarding.classList.add('active');
+        }
+        document.getElementById('btn-start').addEventListener('click', () => {
+            onboarding.classList.remove('active');
+            localStorage.setItem('mm-onboarding-seen', '1');
+        });
+    }
+
+    // ---- Keyboard Navigation ----
+    function setupKeyboard() {
+        document.addEventListener('keydown', (e) => {
+            // Ctrl+Z / Cmd+Z = undo
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                undo();
+            }
+            // Ctrl+Shift+Z / Cmd+Shift+Z = redo
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+                e.preventDefault();
+                redo();
+            }
+            // Ctrl+Y = redo
+            if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+                e.preventDefault();
+                redo();
+            }
+            // Escape closes settings/modals
+            if (e.key === 'Escape') {
+                document.getElementById('settings-panel').classList.remove('open');
+                document.getElementById('settings-overlay').classList.remove('active');
+                document.getElementById('seed-legend-modal').classList.remove('active');
+                document.getElementById('onboarding').classList.remove('active');
+            }
+            // Arrow keys to switch regions (1-5)
+            if (e.key >= '1' && e.key <= '5' && !e.ctrlKey && !e.metaKey && !e.target.closest('input,select,textarea')) {
+                const idx = parseInt(e.key) - 1;
+                const tabs = document.querySelectorAll('.region-tab');
+                if (tabs[idx]) {
+                    tabs[idx].click();
+                }
+            }
+        });
+    }
+
+    // ---- Save/Load ----
     function saveBracket() {
         try {
-            const data = {
-                year: new Date().getFullYear(),
-                regions: {},
-                finalFour: userBracket.finalFour,
-                championship: userBracket.championship
-            };
+            const data = { year: new Date().getFullYear(), regions: {} };
             for (const r of MarchMadnessData.REGION_NAMES) {
-                data.regions[r] = userBracket.regions[r].map(round =>
-                    round.map(team => team ? team.name : null)
-                );
+                data.regions[r] = userBracket.regions[r].map(round => round.map(t => t ? t.name : null));
             }
             data.finalFour = {
                 game1: { winner: userBracket.finalFour.game1.winner?.name || null },
@@ -1013,7 +1274,7 @@ const App = (() => {
             };
             data.championship = { winner: userBracket.championship.winner?.name || null };
             localStorage.setItem('march-madness-bracket', JSON.stringify(data));
-        } catch (e) { /* ignore */ }
+        } catch (e) { /* */ }
     }
 
     function loadBracket() {
@@ -1021,19 +1282,14 @@ const App = (() => {
             const saved = JSON.parse(localStorage.getItem('march-madness-bracket'));
             if (!saved || saved.year !== new Date().getFullYear()) return;
 
-            // Restore region picks
             for (const regionName of MarchMadnessData.REGION_NAMES) {
                 if (!saved.regions[regionName]) continue;
                 const teams = tournamentData.regions[regionName];
-                const allTeams = MarchMadnessData.getTeamsInBracketOrder(teams);
                 const savedRounds = saved.regions[regionName];
-
                 for (let r = 0; r < savedRounds.length; r++) {
                     for (let m = 0; m < savedRounds[r].length; m++) {
-                        const name = savedRounds[r][m];
-                        if (name) {
-                            // Find team in region
-                            const team = teams.find(t => t.name === name);
+                        if (savedRounds[r][m]) {
+                            const team = teams.find(t => t.name === savedRounds[r][m]);
                             if (team) userBracket.regions[regionName][r][m] = team;
                         }
                     }
@@ -1042,29 +1298,27 @@ const App = (() => {
 
             updateFinalFourTeams();
 
-            // Restore FF winners
-            if (saved.finalFour) {
+            if (saved.finalFour?.game1?.winner) {
+                const t = findTeamByName(saved.finalFour.game1.winner);
                 const ff = userBracket.finalFour;
-                if (saved.finalFour.game1?.winner) {
-                    const team = findTeamByName(saved.finalFour.game1.winner);
-                    if (team && (ff.game1.teamA?.name === team.name || ff.game1.teamB?.name === team.name)) {
-                        ff.game1.winner = team;
-                        userBracket.championship.teamA = team;
-                    }
+                if (t && (ff.game1.teamA?.name === t.name || ff.game1.teamB?.name === t.name)) {
+                    ff.game1.winner = t;
+                    userBracket.championship.teamA = t;
                 }
-                if (saved.finalFour.game2?.winner) {
-                    const team = findTeamByName(saved.finalFour.game2.winner);
-                    if (team && (ff.game2.teamA?.name === team.name || ff.game2.teamB?.name === team.name)) {
-                        ff.game2.winner = team;
-                        userBracket.championship.teamB = team;
-                    }
+            }
+            if (saved.finalFour?.game2?.winner) {
+                const t = findTeamByName(saved.finalFour.game2.winner);
+                const ff = userBracket.finalFour;
+                if (t && (ff.game2.teamA?.name === t.name || ff.game2.teamB?.name === t.name)) {
+                    ff.game2.winner = t;
+                    userBracket.championship.teamB = t;
                 }
             }
             if (saved.championship?.winner) {
-                const team = findTeamByName(saved.championship.winner);
-                if (team) userBracket.championship.winner = team;
+                const t = findTeamByName(saved.championship.winner);
+                if (t) userBracket.championship.winner = t;
             }
-        } catch (e) { /* ignore */ }
+        } catch (e) { /* */ }
     }
 
     function findTeamByName(name) {
@@ -1075,7 +1329,8 @@ const App = (() => {
         return null;
     }
 
-    // Background animation
+    // ---- Background Animation ----
+    let bgAnimId = null;
     function initBackground() {
         const canvas = document.getElementById('bg-canvas');
         const ctx = canvas.getContext('2d');
@@ -1089,19 +1344,23 @@ const App = (() => {
         resize();
         window.addEventListener('resize', resize);
 
-        // Create particles
-        for (let i = 0; i < 40; i++) {
+        for (let i = 0; i < 35; i++) {
             particles.push({
-                x: Math.random() * w,
-                y: Math.random() * h,
+                x: Math.random() * (w || 1000),
+                y: Math.random() * (h || 800),
                 r: 1 + Math.random() * 2,
-                dx: (Math.random() - 0.5) * 0.3,
-                dy: (Math.random() - 0.5) * 0.3,
+                dx: (Math.random() - 0.5) * 0.25,
+                dy: (Math.random() - 0.5) * 0.25,
                 color: ['#ff6b35', '#4ecdc4', '#ffd700'][Math.floor(Math.random() * 3)]
             });
         }
 
         function draw() {
+            if (!settings.particles) {
+                bgAnimId = requestAnimationFrame(draw);
+                return;
+            }
+
             ctx.clearRect(0, 0, w, h);
             for (const p of particles) {
                 p.x += p.dx;
@@ -1117,26 +1376,35 @@ const App = (() => {
                 ctx.fill();
             }
 
-            // Draw connections
             ctx.lineWidth = 0.3;
             for (let i = 0; i < particles.length; i++) {
                 for (let j = i + 1; j < particles.length; j++) {
                     const dx = particles[i].x - particles[j].x;
                     const dy = particles[i].y - particles[j].y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < 150) {
+                    if (dist < 140) {
                         ctx.beginPath();
                         ctx.moveTo(particles[i].x, particles[i].y);
                         ctx.lineTo(particles[j].x, particles[j].y);
-                        ctx.strokeStyle = `rgba(78, 205, 196, ${(1 - dist / 150) * 0.2})`;
+                        ctx.strokeStyle = `rgba(78, 205, 196, ${(1 - dist / 140) * 0.15})`;
                         ctx.stroke();
                     }
                 }
             }
 
-            requestAnimationFrame(draw);
+            bgAnimId = requestAnimationFrame(draw);
         }
         draw();
+
+        // Pause when tab not visible (performance)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && bgAnimId) {
+                cancelAnimationFrame(bgAnimId);
+                bgAnimId = null;
+            } else if (!document.hidden && !bgAnimId) {
+                draw();
+            }
+        });
     }
 
     // Start

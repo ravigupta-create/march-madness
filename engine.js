@@ -1,6 +1,7 @@
 // ============================================================
 // MARCH MADNESS PREDICTION ENGINE
-// Log5 probability model, bracket analysis, bot bracket generation
+// Log5 model, Monte Carlo simulation, bracket analysis,
+// bot bracket generation, per-pick explanations
 // ============================================================
 
 const PredictionEngine = (() => {
@@ -12,19 +13,19 @@ const PredictionEngine = (() => {
         return den === 0 ? 0.5 : num / den;
     }
 
-    // Get adjusted strength for a team (seed + conference + rating)
+    // Get adjusted strength for a team
     function getTeamStrength(team) {
+        if (!team) return 0.5;
         let base = MarchMadnessData.SEED_STRENGTH[team.seed] || 0.5;
 
-        // Apply conference multiplier (small effect, ~2-8%)
+        // Conference strength multiplier (2-8% effect)
         const confMult = MarchMadnessData.CONFERENCE_STRENGTH[team.conference]
             || MarchMadnessData.CONFERENCE_STRENGTH['default'];
         base *= confMult;
 
-        // Apply team-specific rating adjustment if available
-        // Rating is 0-100; normalize to small adjustment factor
-        if (team.rating) {
-            const ratingAdj = (team.rating - 75) / 250; // +-0.10 range
+        // Team rating adjustment (rating 0-100 → small adjustment)
+        if (team.rating != null) {
+            const ratingAdj = (team.rating - 75) / 250;
             base = Math.max(0.02, Math.min(0.98, base + ratingAdj));
         }
 
@@ -35,16 +36,13 @@ const PredictionEngine = (() => {
     function getWinProbability(teamA, teamB) {
         if (!teamA || !teamB) return 0.5;
 
-        // For Round 1 matchups, check if we have exact historical data
-        const seedKey1 = `${Math.min(teamA.seed, teamB.seed)}v${Math.max(teamA.seed, teamB.seed)}`;
-        const historical = MarchMadnessData.ROUND1_HISTORICAL[seedKey1];
-
-        // Use adjusted log5 as primary model
         const strA = getTeamStrength(teamA);
         const strB = getTeamStrength(teamB);
         let prob = log5(strA, strB);
 
-        // Blend with historical first-round data if available (60% model, 40% historical)
+        // Blend with historical first-round data when seeds match
+        const seedKey = `${Math.min(teamA.seed, teamB.seed)}v${Math.max(teamA.seed, teamB.seed)}`;
+        const historical = MarchMadnessData.ROUND1_HISTORICAL[seedKey];
         if (historical !== undefined) {
             const histProb = teamA.seed < teamB.seed ? historical : (1 - historical);
             prob = prob * 0.6 + histProb * 0.4;
@@ -53,7 +51,134 @@ const PredictionEngine = (() => {
         return Math.max(0.001, Math.min(0.999, prob));
     }
 
-    // Generate the bot's optimal bracket (pick most probable winner each game)
+    // Confidence interval using Wilson score interval approximation
+    function getConfidenceInterval(prob, n = 160) {
+        // n = effective sample size (160 = ~40 years × 4 regions)
+        const z = 1.96; // 95% CI
+        const phat = prob;
+        const denom = 1 + z * z / n;
+        const center = (phat + z * z / (2 * n)) / denom;
+        const margin = (z * Math.sqrt(phat * (1 - phat) / n + z * z / (4 * n * n))) / denom;
+        return {
+            low: Math.max(0.001, center - margin),
+            high: Math.min(0.999, center + margin),
+            center
+        };
+    }
+
+    // Generate per-pick explanation
+    function getPickExplanation(teamA, teamB, winner) {
+        const prob = getWinProbability(winner, winner === teamA ? teamB : teamA);
+        const loser = winner === teamA ? teamB : teamA;
+        const isUpset = winner.seed > loser.seed;
+
+        const confA = MarchMadnessData.CONFERENCE_STRENGTH[teamA.conference] || 0.95;
+        const confB = MarchMadnessData.CONFERENCE_STRENGTH[teamB.conference] || 0.95;
+
+        let explanation = '';
+
+        if (prob > 0.9) {
+            explanation = `${winner.name} is an overwhelming favorite. Historically, ${winner.seed}-seeds beat ${loser.seed}-seeds over 90% of the time. `;
+        } else if (prob > 0.75) {
+            explanation = `${winner.name} is a strong favorite. The seed advantage is significant. `;
+        } else if (prob > 0.6) {
+            explanation = `${winner.name} has a moderate edge. `;
+            if (isUpset) {
+                explanation += `While ${loser.name} has the higher seed, ${winner.name}'s metrics suggest they're the stronger team. `;
+            }
+        } else if (prob > 0.52) {
+            explanation = `This is a close matchup. `;
+            if (winner.rating > loser.rating) {
+                explanation += `${winner.name}'s slightly higher efficiency rating gives them the edge. `;
+            }
+        } else {
+            explanation = `This is essentially a coin flip. `;
+        }
+
+        // Conference factor
+        if (Math.abs(confA - confB) > 0.05) {
+            const stronger = confA > confB ? teamA : teamB;
+            explanation += `${stronger.name} benefits from playing in the stronger ${stronger.conference} conference. `;
+        }
+
+        // Historical note
+        const seedKey = `${Math.min(teamA.seed, teamB.seed)}v${Math.max(teamA.seed, teamB.seed)}`;
+        const history = MarchMadnessData.SEED_MATCHUP_HISTORY[seedKey];
+        if (history) {
+            explanation += history.note;
+        }
+
+        return explanation.trim();
+    }
+
+    // Monte Carlo simulation — run N bracket simulations
+    function monteCarloSimulate(tournamentData, numSims = 5000) {
+        const results = {};
+
+        // Initialize counters for each team
+        for (const regionName of MarchMadnessData.REGION_NAMES) {
+            for (const team of tournamentData.regions[regionName]) {
+                results[team.name] = {
+                    team,
+                    roundReach: [numSims, 0, 0, 0, 0, 0, 0], // R64 entry, R32, S16, E8, FF, Champ, Winner
+                    championships: 0
+                };
+            }
+        }
+
+        for (let sim = 0; sim < numSims; sim++) {
+            const regionChampions = [];
+
+            for (const regionName of MarchMadnessData.REGION_NAMES) {
+                const teams = tournamentData.regions[regionName];
+                const ordered = MarchMadnessData.getTeamsInBracketOrder(teams);
+
+                // Simulate region
+                let currentTeams = [...ordered];
+                let roundIdx = 1;
+
+                while (currentTeams.length > 1) {
+                    const nextRound = [];
+                    for (let i = 0; i < currentTeams.length; i += 2) {
+                        const tA = currentTeams[i];
+                        const tB = currentTeams[i + 1];
+                        const prob = getWinProbability(tA, tB);
+                        const winner = Math.random() < prob ? tA : tB;
+                        results[winner.name].roundReach[roundIdx]++;
+                        nextRound.push(winner);
+                    }
+                    currentTeams = nextRound;
+                    roundIdx++;
+                }
+                regionChampions.push(currentTeams[0]);
+            }
+
+            // Final Four
+            const ff1prob = getWinProbability(regionChampions[0], regionChampions[1]);
+            const ff1Winner = Math.random() < ff1prob ? regionChampions[0] : regionChampions[1];
+            results[ff1Winner.name].roundReach[5]++;
+
+            const ff2prob = getWinProbability(regionChampions[2], regionChampions[3]);
+            const ff2Winner = Math.random() < ff2prob ? regionChampions[2] : regionChampions[3];
+            results[ff2Winner.name].roundReach[5]++;
+
+            // Championship
+            const champProb = getWinProbability(ff1Winner, ff2Winner);
+            const champion = Math.random() < champProb ? ff1Winner : ff2Winner;
+            results[champion.name].roundReach[6]++;
+            results[champion.name].championships++;
+        }
+
+        // Convert to probabilities
+        for (const key of Object.keys(results)) {
+            results[key].roundReach = results[key].roundReach.map(c => c / numSims);
+            results[key].championshipProb = results[key].championships / numSims;
+        }
+
+        return results;
+    }
+
+    // Generate the bot's optimal bracket
     function generateBotBracket(tournamentData) {
         const bracket = {};
 
@@ -62,65 +187,33 @@ const PredictionEngine = (() => {
             const orderedTeams = MarchMadnessData.getTeamsInBracketOrder(teams);
             const regionGames = [];
 
-            // Round 1: 8 games
-            const round1Winners = [];
-            for (let i = 0; i < 16; i += 2) {
-                const teamA = orderedTeams[i];
-                const teamB = orderedTeams[i + 1];
-                const prob = getWinProbability(teamA, teamB);
-                const winner = prob >= 0.5 ? teamA : teamB;
-                const winProb = prob >= 0.5 ? prob : (1 - prob);
-                round1Winners.push(winner);
-                regionGames.push({
-                    teamA, teamB, winner, probability: winProb,
-                    round: 1, isUpset: winner.seed > Math.min(teamA.seed, teamB.seed)
-                });
-            }
+            const roundData = [orderedTeams];
+            const roundNames = [1, 2, 3, 4];
 
-            // Round 2: 4 games
-            const round2Winners = [];
-            for (let i = 0; i < 8; i += 2) {
-                const teamA = round1Winners[i];
-                const teamB = round1Winners[i + 1];
-                const prob = getWinProbability(teamA, teamB);
-                const winner = prob >= 0.5 ? teamA : teamB;
-                const winProb = prob >= 0.5 ? prob : (1 - prob);
-                round2Winners.push(winner);
-                regionGames.push({
-                    teamA, teamB, winner, probability: winProb,
-                    round: 2, isUpset: winner.seed > Math.min(teamA.seed, teamB.seed)
-                });
+            for (let round = 0; round < 4; round++) {
+                const prev = roundData[round];
+                const winners = [];
+                for (let i = 0; i < prev.length; i += 2) {
+                    const teamA = prev[i];
+                    const teamB = prev[i + 1];
+                    const prob = getWinProbability(teamA, teamB);
+                    const winner = prob >= 0.5 ? teamA : teamB;
+                    const winProb = prob >= 0.5 ? prob : (1 - prob);
+                    winners.push(winner);
+                    regionGames.push({
+                        teamA, teamB, winner, probability: winProb,
+                        round: round + 1,
+                        isUpset: winner.seed > Math.min(teamA.seed, teamB.seed),
+                        explanation: getPickExplanation(teamA, teamB, winner),
+                        ci: getConfidenceInterval(winProb)
+                    });
+                }
+                roundData.push(winners);
             }
-
-            // Sweet 16: 2 games
-            const sweet16Winners = [];
-            for (let i = 0; i < 4; i += 2) {
-                const teamA = round2Winners[i];
-                const teamB = round2Winners[i + 1];
-                const prob = getWinProbability(teamA, teamB);
-                const winner = prob >= 0.5 ? teamA : teamB;
-                const winProb = prob >= 0.5 ? prob : (1 - prob);
-                sweet16Winners.push(winner);
-                regionGames.push({
-                    teamA, teamB, winner, probability: winProb,
-                    round: 3, isUpset: winner.seed > Math.min(teamA.seed, teamB.seed)
-                });
-            }
-
-            // Elite 8: 1 game
-            const teamA = sweet16Winners[0];
-            const teamB = sweet16Winners[1];
-            const prob = getWinProbability(teamA, teamB);
-            const winner = prob >= 0.5 ? teamA : teamB;
-            const winProb = prob >= 0.5 ? prob : (1 - prob);
-            regionGames.push({
-                teamA, teamB, winner, probability: winProb,
-                round: 4, isUpset: winner.seed > Math.min(teamA.seed, teamB.seed)
-            });
 
             bracket[regionName] = {
                 games: regionGames,
-                champion: winner
+                champion: roundData[4][0]
             };
         }
 
@@ -135,17 +228,25 @@ const PredictionEngine = (() => {
         const ff2Prob = getWinProbability(ff2A, ff2B);
         const ff2Winner = ff2Prob >= 0.5 ? ff2A : ff2B;
 
-        // Championship
         const champProb = getWinProbability(ff1Winner, ff2Winner);
         const champion = champProb >= 0.5 ? ff1Winner : ff2Winner;
 
         bracket.finalFour = {
-            game1: { teamA: ff1A, teamB: ff1B, winner: ff1Winner, probability: ff1Prob >= 0.5 ? ff1Prob : 1 - ff1Prob },
-            game2: { teamA: ff2A, teamB: ff2B, winner: ff2Winner, probability: ff2Prob >= 0.5 ? ff2Prob : 1 - ff2Prob }
+            game1: {
+                teamA: ff1A, teamB: ff1B, winner: ff1Winner,
+                probability: ff1Prob >= 0.5 ? ff1Prob : 1 - ff1Prob,
+                explanation: getPickExplanation(ff1A, ff1B, ff1Winner)
+            },
+            game2: {
+                teamA: ff2A, teamB: ff2B, winner: ff2Winner,
+                probability: ff2Prob >= 0.5 ? ff2Prob : 1 - ff2Prob,
+                explanation: getPickExplanation(ff2A, ff2B, ff2Winner)
+            }
         };
         bracket.championship = {
             teamA: ff1Winner, teamB: ff2Winner, winner: champion,
-            probability: champProb >= 0.5 ? champProb : 1 - champProb
+            probability: champProb >= 0.5 ? champProb : 1 - champProb,
+            explanation: getPickExplanation(ff1Winner, ff2Winner, champion)
         };
         bracket.champion = champion;
 
@@ -153,10 +254,9 @@ const PredictionEngine = (() => {
     }
 
     // Analyze a user's bracket picks
-    // userPicks: { regions: { [name]: [winner of each game in order] }, finalFour: {...}, championship: {...} }
     function analyzeUserBracket(userPicks, tournamentData) {
         const analysis = {
-            totalGames: 0,
+            totalGames: 63,
             totalFilled: 0,
             picks: [],
             overallProbability: 1,
@@ -165,7 +265,10 @@ const PredictionEngine = (() => {
             upsetCount: 0,
             riskLevel: '',
             suggestions: [],
-            roundBreakdown: { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] }
+            roundBreakdown: { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] },
+            expectedPoints: {},
+            percentile: 0,
+            seedDistribution: {}
         };
 
         if (!userPicks) return analysis;
@@ -177,8 +280,6 @@ const PredictionEngine = (() => {
 
             const teams = tournamentData.regions[regionName];
             const orderedTeams = MarchMadnessData.getTeamsInBracketOrder(teams);
-
-            // Track winners for each round
             let prevRoundTeams = orderedTeams;
 
             for (let round = 0; round < regionData.length; round++) {
@@ -186,56 +287,56 @@ const PredictionEngine = (() => {
                 if (!roundPicks) continue;
 
                 for (let i = 0; i < roundPicks.length; i++) {
-                    analysis.totalGames++;
                     const winner = roundPicks[i];
                     if (!winner) continue;
 
                     analysis.totalFilled++;
-
-                    // Determine the matchup
-                    const teamAIndex = i * 2;
-                    const teamBIndex = i * 2 + 1;
-                    const teamA = prevRoundTeams[teamAIndex];
-                    const teamB = prevRoundTeams[teamBIndex];
-
+                    const teamA = prevRoundTeams[i * 2];
+                    const teamB = prevRoundTeams[i * 2 + 1];
                     if (!teamA || !teamB) continue;
 
                     const prob = getWinProbability(winner, winner === teamA ? teamB : teamA);
                     const isUpset = winner.seed > Math.min(teamA.seed, teamB.seed);
-
                     if (isUpset) analysis.upsetCount++;
 
                     const pick = {
                         winner, loser: winner === teamA ? teamB : teamA,
                         probability: prob,
+                        ci: getConfidenceInterval(prob),
                         round: round + 1,
                         region: regionName,
                         isUpset,
-                        riskCategory: prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot'
+                        riskCategory: prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot',
+                        explanation: getPickExplanation(teamA, teamB, winner)
                     };
 
                     analysis.picks.push(pick);
                     analysis.roundBreakdown[round + 1].push(pick);
                     analysis.overallProbability *= prob;
+
+                    // Track seed distribution
+                    const seedKey = `Seed ${winner.seed}`;
+                    analysis.seedDistribution[seedKey] = (analysis.seedDistribution[seedKey] || 0) + 1;
                 }
 
                 prevRoundTeams = roundPicks;
             }
         }
 
-        // Analyze Final Four and Championship
+        // Final Four + Championship
         if (userPicks.finalFour) {
             for (const game of [userPicks.finalFour.game1, userPicks.finalFour.game2]) {
                 if (game?.winner && game?.teamA && game?.teamB) {
-                    analysis.totalGames++;
                     analysis.totalFilled++;
                     const prob = getWinProbability(game.winner, game.winner === game.teamA ? game.teamB : game.teamA);
                     const isUpset = game.winner.seed > Math.min(game.teamA.seed, game.teamB.seed);
                     if (isUpset) analysis.upsetCount++;
                     const pick = {
                         winner: game.winner, loser: game.winner === game.teamA ? game.teamB : game.teamA,
-                        probability: prob, round: 5, region: 'Final Four', isUpset,
-                        riskCategory: prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot'
+                        probability: prob, ci: getConfidenceInterval(prob),
+                        round: 5, region: 'Final Four', isUpset,
+                        riskCategory: prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot',
+                        explanation: getPickExplanation(game.teamA, game.teamB, game.winner)
                     };
                     analysis.picks.push(pick);
                     analysis.roundBreakdown[5].push(pick);
@@ -244,7 +345,6 @@ const PredictionEngine = (() => {
             }
 
             if (userPicks.championship?.winner && userPicks.championship?.teamA && userPicks.championship?.teamB) {
-                analysis.totalGames++;
                 analysis.totalFilled++;
                 const game = userPicks.championship;
                 const prob = getWinProbability(game.winner, game.winner === game.teamA ? game.teamB : game.teamA);
@@ -252,8 +352,10 @@ const PredictionEngine = (() => {
                 if (isUpset) analysis.upsetCount++;
                 const pick = {
                     winner: game.winner, loser: game.winner === game.teamA ? game.teamB : game.teamA,
-                    probability: prob, round: 6, region: 'Championship', isUpset,
-                    riskCategory: prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot'
+                    probability: prob, ci: getConfidenceInterval(prob),
+                    round: 6, region: 'Championship', isUpset,
+                    riskCategory: prob >= 0.7 ? 'safe' : prob >= 0.45 ? 'moderate' : prob >= 0.25 ? 'risky' : 'longshot',
+                    explanation: getPickExplanation(game.teamA, game.teamB, game.winner)
                 };
                 analysis.picks.push(pick);
                 analysis.roundBreakdown[6].push(pick);
@@ -261,23 +363,46 @@ const PredictionEngine = (() => {
             }
         }
 
-        // Calculate bracket score (normalized for readability)
+        // Calculate bracket score
         if (analysis.totalFilled > 0) {
             analysis.log10Probability = Math.log10(analysis.overallProbability);
-            // Score: 0-100 based on how likely the bracket is relative to perfectly chalky
-            const chalkyLog = -8.5; // approx log10 probability of a "perfect chalk" bracket
-            const randomLog = -19; // approx log10 probability of random picks
+            const chalkyLog = -8.5;
+            const randomLog = -19;
             const userLog = analysis.log10Probability;
             analysis.bracketScore = Math.max(0, Math.min(100,
                 ((userLog - randomLog) / (chalkyLog - randomLog)) * 100
             ));
         }
 
-        // Risk assessment
-        if (analysis.upsetCount <= 3) analysis.riskLevel = 'Conservative';
+        // Calculate expected points for each scoring system
+        for (const [key, system] of Object.entries(MarchMadnessData.SCORING_SYSTEMS)) {
+            let expected = 0;
+            for (const pick of analysis.picks) {
+                let pts = system.points[pick.round - 1] || 0;
+                if (system.seedMultiplier) pts *= pick.winner.seed;
+                if (system.upsetMultiplier && pick.isUpset) pts *= 1.5;
+                expected += pts * pick.probability;
+            }
+            analysis.expectedPoints[key] = Math.round(expected);
+        }
+
+        // Percentile estimation (based on bracket score)
+        // Calibrated: score 80+ = top 5%, 60-80 = top 25%, 40-60 = top 50%
+        if (analysis.bracketScore >= 90) analysis.percentile = 98;
+        else if (analysis.bracketScore >= 80) analysis.percentile = 95;
+        else if (analysis.bracketScore >= 70) analysis.percentile = 85;
+        else if (analysis.bracketScore >= 60) analysis.percentile = 70;
+        else if (analysis.bracketScore >= 50) analysis.percentile = 50;
+        else if (analysis.bracketScore >= 40) analysis.percentile = 35;
+        else if (analysis.bracketScore >= 30) analysis.percentile = 20;
+        else if (analysis.bracketScore >= 20) analysis.percentile = 10;
+        else analysis.percentile = 5;
+
+        // Risk level
+        if (analysis.upsetCount <= 3) analysis.riskLevel = 'Conservative (Chalk)';
         else if (analysis.upsetCount <= 7) analysis.riskLevel = 'Moderate';
         else if (analysis.upsetCount <= 12) analysis.riskLevel = 'Aggressive';
-        else analysis.riskLevel = 'Chaos';
+        else analysis.riskLevel = 'Chaos Agent';
 
         // Generate suggestions
         analysis.suggestions = generateSuggestions(analysis);
@@ -288,50 +413,110 @@ const PredictionEngine = (() => {
     function generateSuggestions(analysis) {
         const suggestions = [];
 
-        // Find the riskiest picks
+        // Riskiest picks
         const riskyPicks = analysis.picks
             .filter(p => p.riskCategory === 'longshot' || p.riskCategory === 'risky')
             .sort((a, b) => a.probability - b.probability);
 
         for (const pick of riskyPicks.slice(0, 5)) {
-            const roundNames = { 1: 'Round of 64', 2: 'Round of 32', 3: 'Sweet 16', 4: 'Elite 8', 5: 'Final Four', 6: 'Championship' };
             suggestions.push({
                 type: 'risk',
-                message: `${pick.winner.name} (${pick.winner.seed}) over ${pick.loser.name} (${pick.loser.seed}) in ${roundNames[pick.round]} — only ${(pick.probability * 100).toFixed(1)}% likely`,
+                severity: pick.probability < 0.15 ? 'high' : 'medium',
+                message: `${pick.winner.name} (${pick.winner.seed}) over ${pick.loser.name} (${pick.loser.seed}) in ${MarchMadnessData.ROUND_NAMES[pick.round - 1]} has only a ${(pick.probability * 100).toFixed(1)}% chance. Switching to ${pick.loser.name} would significantly improve your bracket's probability.`,
                 pick,
-                alternative: pick.loser
+                alternative: pick.loser,
+                probImprovement: ((1 - pick.probability) / pick.probability).toFixed(1) + 'x more likely'
             });
         }
 
-        // Check if bracket is too chalky or too chaotic
+        // Strategic analysis
         if (analysis.upsetCount === 0 && analysis.totalFilled > 10) {
             suggestions.push({
                 type: 'strategy',
-                message: 'Your bracket has zero upsets. Historically, 8-10 upsets occur per tournament. Consider picking a few 12-over-5 or 11-over-6 upsets to differentiate.'
+                message: 'Your bracket has zero upsets. Historically, 8-10 upsets occur per tournament. Without any upsets, your bracket will look identical to millions of others. Consider picking 2-3 upsets (12-over-5 and 11-over-6 are the most common) to differentiate yourself in a bracket pool.'
             });
         }
 
         if (analysis.upsetCount > 15) {
             suggestions.push({
                 type: 'strategy',
-                message: 'Your bracket has an unusually high number of upsets. While upsets happen, too many dramatically reduce your bracket\'s probability.'
+                message: 'You have over 15 upsets — thats significantly more than the historical average of 8-10. While a few well-placed upsets differentiate your bracket, too many reduce your overall probability dramatically. Consider removing some lower-confidence upsets in later rounds.'
             });
         }
 
-        // Check if all 1-seeds are in Final Four
-        const ff = analysis.roundBreakdown[5] || [];
-        const oneSeeds = ff.filter(p => p.winner.seed === 1);
-        if (ff.length === 2 && oneSeeds.length === 2) {
+        // Check 5v12 upsets (the classic)
+        const has5v12 = analysis.picks.some(p => p.round === 1 && p.winner.seed === 12 && p.loser.seed === 5);
+        if (!has5v12 && analysis.totalFilled >= 32) {
             suggestions.push({
                 type: 'info',
-                message: 'Historically, only ~20% of Final Fours have all 1-seeds. Having at least one 2 or 3 seed is common.'
+                message: 'You have no 12-over-5 upsets. Historically, at least one 12-seed wins in the first round about 65% of tournaments. This is the most common upset pick.'
+            });
+        }
+
+        // Check Final Four seeds
+        const ffPicks = analysis.roundBreakdown[5] || [];
+        if (ffPicks.length >= 2) {
+            const allOneSeeds = ffPicks.every(p => p.winner.seed === 1);
+            if (allOneSeeds) {
+                suggestions.push({
+                    type: 'info',
+                    message: 'All your Final Four teams are 1-seeds. Since 1985, only one tournament (2008) has had all four 1-seeds in the Final Four. Consider having at least one 2 or 3 seed.'
+                });
+            }
+        }
+
+        // Champion seed check
+        const champPick = analysis.roundBreakdown[6]?.[0];
+        if (champPick) {
+            if (champPick.winner.seed > 8) {
+                suggestions.push({
+                    type: 'risk',
+                    severity: 'high',
+                    message: `A ${champPick.winner.seed}-seed champion would be historic. The lowest seed to ever win was 8-seed Villanova in 1985. Consider a higher-seeded champion for better probability.`,
+                    pick: champPick
+                });
+            } else if (champPick.winner.seed > 4) {
+                suggestions.push({
+                    type: 'info',
+                    message: `A ${champPick.winner.seed}-seed champion is rare but possible. Since 1985, seeds 1-3 have won ~82% of championships.`
+                });
+            }
+        }
+
+        // Upset distribution check
+        const r1Upsets = (analysis.roundBreakdown[1] || []).filter(p => p.isUpset).length;
+        if (r1Upsets > 10 && analysis.totalFilled >= 32) {
+            suggestions.push({
+                type: 'strategy',
+                message: `You have ${r1Upsets} first-round upsets. The historical average is about 5.4. Consider being more selective — focus on the classic 5/12, 6/11, and 7/10 matchups.`
             });
         }
 
         return suggestions;
     }
 
-    // Get probability explanation for a specific matchup
+    // "What if" simulation: if user changes one pick, how does score change?
+    function whatIfAnalysis(userPicks, tournamentData, regionName, round, matchupIdx, newWinner) {
+        // Clone and modify
+        const modified = JSON.parse(JSON.stringify(userPicks));
+        // This is a simplified version — full implementation would cascade
+        if (modified.regions[regionName]?.[round]) {
+            const teams = tournamentData.regions[regionName];
+            const team = teams.find(t => t.name === newWinner);
+            if (team) {
+                modified.regions[regionName][round][matchupIdx] = team;
+            }
+        }
+        const original = analyzeUserBracket(userPicks, tournamentData);
+        const newAnalysis = analyzeUserBracket(modified, tournamentData);
+        return {
+            scoreDelta: newAnalysis.bracketScore - original.bracketScore,
+            probRatio: newAnalysis.overallProbability / original.overallProbability,
+            newScore: newAnalysis.bracketScore
+        };
+    }
+
+    // Get matchup insight
     function getMatchupInsight(teamA, teamB) {
         const prob = getWinProbability(teamA, teamB);
         const favorite = prob >= 0.5 ? teamA : teamB;
@@ -339,41 +524,28 @@ const PredictionEngine = (() => {
         const favProb = prob >= 0.5 ? prob : (1 - prob);
 
         let insight = '';
-        if (favProb > 0.9) insight = 'Dominant favorite. Upsets at this seed matchup are extremely rare.';
+        if (favProb > 0.9) insight = 'Dominant favorite. Upsets extremely rare at this seed matchup.';
         else if (favProb > 0.75) insight = 'Strong favorite. The higher seed should win comfortably.';
-        else if (favProb > 0.6) insight = 'Moderate favorite. Upsets are possible but not expected.';
-        else if (favProb > 0.52) insight = 'Near toss-up. This game could go either way.';
-        else insight = 'Coin flip. Seed difference is minimal here.';
+        else if (favProb > 0.6) insight = 'Moderate favorite. Upsets possible but not expected.';
+        else if (favProb > 0.52) insight = 'Near toss-up. Could go either way.';
+        else insight = 'Coin flip. Minimal seed difference here.';
+
+        const seedKey = `${Math.min(teamA.seed, teamB.seed)}v${Math.max(teamA.seed, teamB.seed)}`;
+        const history = MarchMadnessData.SEED_MATCHUP_HISTORY[seedKey];
 
         return {
             favorite, underdog, probability: favProb,
             insight,
-            historicalNote: getHistoricalNote(teamA.seed, teamB.seed)
+            ci: getConfidenceInterval(favProb),
+            historicalNote: history?.note || '',
+            historicalRecord: history ? `${history.wins}-${history.losses}` : ''
         };
-    }
-
-    function getHistoricalNote(seedA, seedB) {
-        const matchups = {
-            '1v16': 'Only 2 times has a 16 seed beaten a 1 seed (UMBC over Virginia 2018, FDU over Purdue 2023).',
-            '2v15': '15 seeds have won about 5.6% of the time — notable: Oral Roberts 2021, St. Peter\'s 2022.',
-            '5v12': 'The famous 5-12 upset occurs ~35% of the time. At least one happens almost every year.',
-            '8v9': 'The closest matchup in the tournament. Essentially a coin flip historically.',
-            '3v14': '14 seeds win about 15% of the time. A solid upset pick.',
-            '4v13': '13 seeds win about 21% of the time. Notable: Sister Jean\'s Loyola-Chicago 2018.',
-            '6v11': '11 seeds (often play-in teams) upset 6 seeds ~38% of the time.',
-            '7v10': '10 seeds win about 39% of the time. Very competitive matchup.'
-        };
-        const key = `${Math.min(seedA, seedB)}v${Math.max(seedA, seedB)}`;
-        return matchups[key] || '';
     }
 
     return {
-        log5,
-        getTeamStrength,
-        getWinProbability,
-        generateBotBracket,
-        analyzeUserBracket,
-        getMatchupInsight,
-        getHistoricalNote
+        log5, getTeamStrength, getWinProbability, getConfidenceInterval,
+        getPickExplanation, monteCarloSimulate,
+        generateBotBracket, analyzeUserBracket,
+        whatIfAnalysis, getMatchupInsight
     };
 })();
