@@ -2,12 +2,16 @@
 <html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>March Madness Bracket</title>
-    <meta name="description" content="Interactive March Madness bracket with AI-powered predictions, analysis, and head-to-head comparison. 100% free.">
+    <meta name="description" content="Interactive March Madness bracket with AI-powered predictions, Monte Carlo simulation, analysis, and head-to-head comparison. 100% free.">
     <meta property="og:title" content="March Madness Bracket">
-    <meta property="og:description" content="Build your bracket, get AI predictions, and see how likely your picks are to happen.">
+    <meta property="og:description" content="Build your bracket, get AI predictions, and see how likely your picks are.">
     <meta property="og:type" content="website">
+    <meta name="theme-color" content="#ff6b35">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -16,29 +20,42 @@
 </head>
 <body data-particles="on" data-show-probs="on">
 
-    <!-- Skip link for accessibility -->
     <a href="#bracket-container" class="skip-link">Skip to bracket</a>
-
     <canvas id="bg-canvas" aria-hidden="true"></canvas>
 
     <header class="header" role="banner">
         <h1>March Madness <span class="year-badge" id="year-badge"></span></h1>
-        <p class="subtitle">Interactive Bracket Challenge &mdash; AI-Powered Predictions &amp; Analysis</p>
+        <div class="subtitle">Interactive Bracket Challenge &mdash; AI-Powered Predictions &amp; Analysis</div>
+        <div class="bracket-name-row" id="bracket-name-row">
+            <input type="text" id="bracket-name-input" class="bracket-name-input" placeholder="Name your bracket..." maxlength="40" aria-label="Bracket name">
+        </div>
     </header>
 
     <nav class="nav" role="navigation" aria-label="Main navigation">
         <div class="nav-left">
-            <button class="nav-btn active" data-view="bracket" aria-label="My Bracket view">My Bracket</button>
-            <button class="nav-btn" data-view="bot" aria-label="Bot Bracket view">Bot Bracket</button>
-            <button class="nav-btn" data-view="analysis" aria-label="Analysis view">Analysis</button>
-            <button class="nav-btn" data-view="h2h" aria-label="Head to Head view">Head to Head</button>
-            <button class="nav-btn" data-view="simulate" aria-label="Monte Carlo Simulation view">Simulate</button>
+            <button class="nav-btn active" data-view="bracket" aria-label="My Bracket">My Bracket</button>
+            <button class="nav-btn" data-view="bot" aria-label="Bot Bracket">Bot Bracket</button>
+            <button class="nav-btn" data-view="analysis" aria-label="Analysis">Analysis</button>
+            <button class="nav-btn" data-view="h2h" aria-label="Head to Head">Head to Head</button>
+            <button class="nav-btn" data-view="simulate" aria-label="Simulate">Simulate</button>
         </div>
         <div class="nav-right">
-            <button class="icon-btn" id="btn-seed-legend" title="Seed History &amp; Legend" aria-label="Open seed legend">?</button>
-            <button class="icon-btn" id="btn-print" title="Print bracket" aria-label="Print bracket">&#9113;</button>
-            <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Open settings">&#9881;</button>
+            <button class="icon-btn" id="btn-seed-legend" title="Seed History" aria-label="Seed legend">?</button>
+            <button class="icon-btn" id="btn-export" title="Export bracket" aria-label="Export bracket as image">&#8681;</button>
+            <button class="icon-btn" id="btn-share" title="Share bracket link" aria-label="Share bracket">&#8599;</button>
+            <button class="icon-btn" id="btn-print" title="Print" aria-label="Print">&#9113;</button>
+            <button class="icon-btn" id="btn-keys" title="Keyboard shortcuts" aria-label="Keyboard shortcuts">&#9000;</button>
+            <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Settings">&#9881;</button>
         </div>
+    </nav>
+
+    <!-- Mobile bottom nav -->
+    <nav class="mobile-nav" role="navigation" aria-label="Mobile navigation">
+        <button class="mobile-nav-btn active" data-view="bracket">Bracket</button>
+        <button class="mobile-nav-btn" data-view="bot">Bot</button>
+        <button class="mobile-nav-btn" data-view="analysis">Analysis</button>
+        <button class="mobile-nav-btn" data-view="h2h">H2H</button>
+        <button class="mobile-nav-btn" data-view="simulate">Sim</button>
     </nav>
 
     <main class="main" role="main" id="main-content">
@@ -46,18 +63,23 @@
         <!-- MY BRACKET -->
         <div class="view active" id="view-bracket">
             <div class="bracket-controls">
-                <button class="btn" id="btn-undo" title="Undo last pick" aria-label="Undo">&#8630; Undo</button>
-                <button class="btn" id="btn-redo" title="Redo" aria-label="Redo">&#8631; Redo</button>
-                <button class="btn" id="btn-reset" title="Clear all picks">Reset</button>
-                <button class="btn" id="btn-randomize" title="Random bracket weighted by probability">Randomize</button>
-                <button class="btn btn-primary" id="btn-autofill" title="Fill remaining with most probable picks">Auto-Fill</button>
-                <button class="btn" id="btn-copy-bot" title="Copy the bot's bracket">Copy Bot</button>
+                <button class="btn" id="btn-undo" title="Undo (Ctrl+Z)" disabled>&#8630; Undo</button>
+                <button class="btn" id="btn-redo" title="Redo (Ctrl+Y)" disabled>&#8631; Redo</button>
+                <button class="btn" id="btn-reset">Reset</button>
+                <button class="btn" id="btn-randomize">Randomize</button>
+                <button class="btn btn-primary" id="btn-autofill">Auto-Fill</button>
+                <button class="btn" id="btn-copy-bot">Copy Bot</button>
+                <div class="bracket-manage">
+                    <button class="btn btn-sm" id="btn-save-bracket" title="Save as new bracket">Save As</button>
+                    <select id="bracket-selector" aria-label="Load saved bracket" class="bracket-select">
+                        <option value="">Saved Brackets</option>
+                    </select>
+                </div>
                 <div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="63"><div class="progress-fill" id="progress-fill"></div></div>
                 <span class="progress-text" id="progress-text">0 / 63</span>
             </div>
 
-            <div class="region-tabs" id="region-tabs" role="tablist" aria-label="Regions"></div>
-
+            <div class="region-tabs" id="region-tabs" role="tablist"></div>
             <div class="bracket-container" id="bracket-container" tabindex="-1"></div>
 
             <div class="final-four-section" id="final-four-section">
@@ -76,13 +98,7 @@
         <div class="view" id="view-bot">
             <div class="bot-explanation">
                 <h3>Bot Prediction Model</h3>
-                <p>
-                    Generated using a <strong>log5 probability model</strong> calibrated against
-                    40 years of NCAA tournament data (1985&ndash;present). Each matchup factors in
-                    seed-based historical win rates, conference strength, and team efficiency ratings.
-                    The bot picks the statistically most probable winner for each game.
-                    <strong>Click any pick to see the detailed explanation.</strong>
-                </p>
+                <p>Generated using a <strong>log5 probability model</strong> calibrated against 40 years of NCAA tournament data (1985&ndash;present). Factors: seed-based historical win rates, conference strength, team efficiency ratings. <strong>Click any pick for explanation.</strong></p>
             </div>
             <div class="bot-picks-grid" id="bot-picks-grid"></div>
             <div class="final-four-section active" id="bot-ff-section" style="margin-top:16px;">
@@ -92,38 +108,19 @@
         </div>
 
         <!-- ANALYSIS -->
-        <div class="view" id="view-analysis">
-            <div id="analysis-content">
-                <div class="empty-state">
-                    <div class="icon">📊</div>
-                    <h3>Fill in your bracket first</h3>
-                    <p>Complete at least a few picks in "My Bracket" to see your analysis.</p>
-                </div>
-            </div>
-        </div>
+        <div class="view" id="view-analysis"><div id="analysis-content">
+            <div class="empty-state"><div class="icon">📊</div><h3>Fill in your bracket first</h3><p>Make picks to see your analysis.</p></div>
+        </div></div>
 
         <!-- HEAD TO HEAD -->
-        <div class="view" id="view-h2h">
-            <div id="h2h-content">
-                <div class="empty-state">
-                    <div class="icon">&#9876;</div>
-                    <h3>Make your picks first</h3>
-                    <p>Fill in your bracket to compare it against the bot's predictions.</p>
-                </div>
-            </div>
-        </div>
+        <div class="view" id="view-h2h"><div id="h2h-content">
+            <div class="empty-state"><div class="icon">&#9876;</div><h3>Make your picks first</h3><p>Fill in your bracket to compare against the bot.</p></div>
+        </div></div>
 
-        <!-- MONTE CARLO SIMULATION -->
-        <div class="view" id="view-simulate">
-            <div id="simulate-content">
-                <div class="empty-state">
-                    <div class="icon">&#127922;</div>
-                    <h3>Monte Carlo Simulation</h3>
-                    <p>Running 5,000 tournament simulations to find each team's probability of reaching every round...</p>
-                    <div class="loading-spinner" style="margin:16px auto;"></div>
-                </div>
-            </div>
-        </div>
+        <!-- SIMULATE -->
+        <div class="view" id="view-simulate"><div id="simulate-content">
+            <div class="empty-state"><div class="icon">&#127922;</div><h3>Monte Carlo Simulation</h3><p>Running 5,000 simulations...</p><div class="loading-spinner" style="margin:16px auto;"></div></div>
+        </div></div>
 
     </main>
 
@@ -133,6 +130,7 @@
         <div class="tip-prob"></div>
         <div class="tip-record"></div>
         <div class="tip-note"></div>
+        <div class="tip-whatif"></div>
     </div>
 
     <!-- Toast -->
@@ -142,63 +140,50 @@
     <div class="confetti-container" id="confetti-container" aria-hidden="true"></div>
 
     <!-- Settings Panel -->
-    <div class="settings-overlay" id="settings-overlay" aria-hidden="true"></div>
+    <div class="settings-overlay" id="settings-overlay"></div>
     <aside class="settings-panel" id="settings-panel" role="complementary" aria-label="Settings">
         <h2>Settings</h2>
         <div class="settings-group">
             <h4>Appearance</h4>
-            <div class="setting-row">
-                <div><div class="setting-label">Dark Mode</div><div class="setting-desc">Toggle dark/light theme</div></div>
-                <label class="toggle"><input type="checkbox" id="setting-dark" checked aria-label="Dark mode"><span class="toggle-slider"></span></label>
-            </div>
-            <div class="setting-row">
-                <div><div class="setting-label">Particles</div><div class="setting-desc">Animated background</div></div>
-                <label class="toggle"><input type="checkbox" id="setting-particles" checked aria-label="Particle background"><span class="toggle-slider"></span></label>
-            </div>
-            <div class="setting-row">
-                <div><div class="setting-label">Show Probabilities</div><div class="setting-desc">Win % on each team slot</div></div>
-                <label class="toggle"><input type="checkbox" id="setting-probs" checked aria-label="Show win probabilities"><span class="toggle-slider"></span></label>
-            </div>
+            <div class="setting-row"><div><div class="setting-label">Dark Mode</div></div><label class="toggle"><input type="checkbox" id="setting-dark" checked><span class="toggle-slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">Particles</div></div><label class="toggle"><input type="checkbox" id="setting-particles" checked><span class="toggle-slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">Show Probabilities</div></div><label class="toggle"><input type="checkbox" id="setting-probs" checked><span class="toggle-slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">Seed Colors</div><div class="setting-desc">Color-code teams by seed tier</div></div><label class="toggle"><input type="checkbox" id="setting-seed-colors" checked><span class="toggle-slider"></span></label></div>
         </div>
         <div class="settings-group">
-            <h4>Audio</h4>
-            <div class="setting-row">
-                <div><div class="setting-label">Sound Effects</div><div class="setting-desc">Click and advance sounds</div></div>
-                <label class="toggle"><input type="checkbox" id="setting-sounds" checked aria-label="Sound effects"><span class="toggle-slider"></span></label>
-            </div>
+            <h4>Behavior</h4>
+            <div class="setting-row"><div><div class="setting-label">Sound Effects</div></div><label class="toggle"><input type="checkbox" id="setting-sounds" checked><span class="toggle-slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">Auto-Save</div></div><label class="toggle"><input type="checkbox" id="setting-autosave" checked><span class="toggle-slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">Reduce Motion</div><div class="setting-desc">Disable animations</div></div><label class="toggle"><input type="checkbox" id="setting-reduce-motion"><span class="toggle-slider"></span></label></div>
         </div>
         <div class="settings-group">
-            <h4>Data</h4>
-            <div class="setting-row">
-                <div><div class="setting-label">Auto-Save</div><div class="setting-desc">Save bracket to browser</div></div>
-                <label class="toggle"><input type="checkbox" id="setting-autosave" checked aria-label="Auto-save bracket"><span class="toggle-slider"></span></label>
-            </div>
+            <h4>Scoring</h4>
+            <div class="setting-row"><select id="setting-scoring" class="setting-select">
+                <option value="standard">Standard (10-20-40-80-160-320)</option>
+                <option value="espn">ESPN</option>
+                <option value="upset">Upset Bonus (1.5x)</option>
+                <option value="seed">Seed Weighted</option>
+            </select></div>
         </div>
-        <div class="settings-group">
-            <h4>Scoring System</h4>
-            <div class="setting-row">
-                <div><div class="setting-label">Pool Scoring</div></div>
-                <select id="setting-scoring" aria-label="Scoring system" style="padding:5px 8px;background:var(--bg-input);border:1px solid var(--border);border-radius:5px;color:var(--text-primary);font-family:inherit;font-size:0.8rem;">
-                    <option value="standard">Standard (10-20-40-80-160-320)</option>
-                    <option value="espn">ESPN</option>
-                    <option value="upset">Upset Bonus (1.5x)</option>
-                    <option value="seed">Seed Weighted</option>
-                </select>
-            </div>
-        </div>
-        <button class="btn" style="width:100%;margin-top:12px;" id="btn-close-settings">Close</button>
+        <button class="btn" style="width:100%;margin-top:10px;" id="btn-close-settings">Close</button>
     </aside>
 
     <!-- Seed Legend Modal -->
     <div class="modal-overlay" id="seed-legend-modal">
-        <div class="modal" role="dialog" aria-label="Seed History Legend">
-            <button class="modal-close" id="btn-close-legend" aria-label="Close">&times;</button>
-            <h2>Seed Matchup History (1985-2024)</h2>
-            <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:12px;">40 years of NCAA tournament first-round results. The higher seed's historical win rate is shown.</p>
-            <div class="seed-row header">
-                <span>Match</span><span>History</span><span>Record</span><span>Win %</span>
-            </div>
+        <div class="modal" role="dialog" aria-label="Seed History">
+            <button class="modal-close" id="btn-close-legend">&times;</button>
+            <h2>Seed Matchup History (1985&ndash;2024)</h2>
+            <p style="font-size:0.76rem;color:var(--text-secondary);margin-bottom:10px;">40 years of first-round data. Higher seed win rate shown.</p>
             <div id="seed-legend-rows"></div>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div class="modal-overlay" id="keys-modal">
+        <div class="modal" role="dialog" aria-label="Keyboard shortcuts">
+            <button class="modal-close" id="btn-close-keys">&times;</button>
+            <h2>Keyboard Shortcuts</h2>
+            <div id="keys-list"></div>
         </div>
     </div>
 
@@ -206,35 +191,24 @@
     <div class="onboarding" id="onboarding">
         <div class="onboard-card">
             <h2>Welcome to March Madness</h2>
-            <p class="subtitle">Build your bracket, get AI analysis, and see how your picks stack up.</p>
+            <p class="subtitle">Build your bracket, get AI analysis, and compete.</p>
             <div class="onboard-steps">
-                <div class="onboard-step">
-                    <span class="onboard-num">1</span>
-                    <span class="onboard-text"><strong>Pick winners</strong> by clicking teams in each matchup. Your picks advance automatically.</span>
-                </div>
-                <div class="onboard-step">
-                    <span class="onboard-num">2</span>
-                    <span class="onboard-text"><strong>View the Bot Bracket</strong> to see AI-predicted winners with explanations and confidence intervals.</span>
-                </div>
-                <div class="onboard-step">
-                    <span class="onboard-num">3</span>
-                    <span class="onboard-text"><strong>Check Analysis</strong> for your bracket's probability score, risk profile, percentile ranking, and suggestions.</span>
-                </div>
-                <div class="onboard-step">
-                    <span class="onboard-num">4</span>
-                    <span class="onboard-text"><strong>Head to Head</strong> compares your bracket to the bot's pick-by-pick.</span>
-                </div>
-                <div class="onboard-step">
-                    <span class="onboard-num">5</span>
-                    <span class="onboard-text"><strong>Simulate</strong> runs 5,000 Monte Carlo simulations to find each team's true championship probability.</span>
-                </div>
+                <div class="onboard-step"><span class="onboard-num">1</span><span class="onboard-text"><strong>Pick winners</strong> by clicking teams. Picks advance automatically.</span></div>
+                <div class="onboard-step"><span class="onboard-num">2</span><span class="onboard-text"><strong>Bot Bracket</strong> shows AI picks with explanations.</span></div>
+                <div class="onboard-step"><span class="onboard-num">3</span><span class="onboard-text"><strong>Analysis</strong> gives probability score, risk profile, charts, and suggestions.</span></div>
+                <div class="onboard-step"><span class="onboard-num">4</span><span class="onboard-text"><strong>Head to Head</strong> compares your picks to the bot.</span></div>
+                <div class="onboard-step"><span class="onboard-num">5</span><span class="onboard-text"><strong>Simulate</strong> runs 5,000 Monte Carlo simulations.</span></div>
             </div>
             <button class="btn btn-primary" id="btn-start" style="width:100%;padding:10px;">Let's Go</button>
         </div>
     </div>
 
+    <!-- Canvas for export -->
+    <canvas id="export-canvas" style="display:none;"></canvas>
+
     <script src="data.js"></script>
     <script src="engine.js"></script>
     <script src="app.js"></script>
+    <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
 </body>
 </html>
