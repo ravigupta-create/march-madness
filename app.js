@@ -33,11 +33,37 @@ const App = (() => {
         setupSeedLegend(); setupKeysModal(); setupOnboarding(); setupKeyboard();
         setupExport(); setupShare(); setupMultipleBrackets(); setupSwipe();
         initBackground(); renderFullBracket(); renderBracket(); renderFinalFour(); renderBotBracket(); updateProgress();
+
+        // Fetch real season stats from ESPN (analyzes every game played this season)
+        // Runs in background — predictions auto-upgrade when stats arrive
+        fetchAndUpgrade();
         // Bracket name
         const nameInput = document.getElementById('bracket-name-input');
         const savedName = localStorage.getItem('mm-bracket-name');
         if (savedName) nameInput.value = savedName;
         nameInput.addEventListener('input', () => localStorage.setItem('mm-bracket-name', nameInput.value));
+    }
+
+    // Fetch real season stats from ESPN and rebuild predictions
+    async function fetchAndUpgrade() {
+        try {
+            showToast('Loading season stats from ESPN...');
+            await MarchMadnessData.fetchAllSeasonStats(tournamentData);
+            if (MarchMadnessData.hasSeasonStats()) {
+                // Regenerate bot bracket with real stats
+                botBracket = PredictionEngine.generateBotBracket(tournamentData);
+                renderBotBracket();
+                renderFullBracket();
+                renderBracket();
+                renderFinalFour();
+                // Reset simulation so it re-runs with new data
+                simDone = false; mcResults = null;
+                const statCount = Object.keys(MarchMadnessData.getSeasonStats()).length;
+                showToast(`Loaded real stats for ${statCount} teams — predictions upgraded`);
+            }
+        } catch (e) {
+            // Silent fallback to seed-based predictions
+        }
     }
 
     function initUserBracket() {

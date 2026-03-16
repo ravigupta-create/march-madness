@@ -179,28 +179,173 @@ const MarchMadnessData = (() => {
         return ordered;
     }
 
-    // Attempt to fetch live tournament data from ESPN public API
-    async function fetchLiveData(year) {
-        try {
-            const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?groups=100&limit=100&dates=${year}0315`;
-            const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
-            if (!resp.ok) return null;
-            const data = await resp.json();
-            // Parse ESPN data format (if available)
-            if (data.events && data.events.length > 0) {
-                return { source: 'espn', events: data.events, year };
+    // ESPN team ID map for 2026 tournament teams (stable IDs)
+    const ESPN_TEAM_IDS = {
+        'Duke':150,'UConn':41,'Michigan State':127,'Kansas':2305,"St. John's":2599,
+        'Louisville':97,'UCLA':26,'Ohio State':194,'TCU':2628,'UCF':2116,
+        'South Florida':58,'Northern Iowa':2460,'CA Baptist':2856,'N Dakota State':2449,
+        'Furman':231,'Siena':2561,'Arizona':12,'Purdue':2509,'Gonzaga':2250,
+        'Arkansas':8,'Wisconsin':275,'BYU':252,'Miami':2390,'Villanova':2918,
+        'Utah State':328,'Missouri':142,'NC State':152,'High Point':2314,
+        "Hawai'i":62,'Kennesaw State':338,'Queens':3101,'Long Island':2344,
+        'Florida':57,'Houston':248,'Illinois':356,'Nebraska':158,'Vanderbilt':238,
+        'North Carolina':153,"Saint Mary's":2608,'Clemson':228,'Iowa':2294,
+        'Texas A&M':245,'VCU':2670,'McNeese':2377,'Troy':2653,'Penn':219,
+        'Idaho':70,'Lehigh':2329,'Michigan':130,'Iowa State':66,'Virginia':258,
+        'Alabama':333,'Texas Tech':2641,'Tennessee':2633,'Kentucky':96,'Georgia':61,
+        'Saint Louis':139,'Santa Clara':2541,'SMU':2567,'Akron':2006,'Hofstra':2275,
+        'Wright State':2750,'Tennessee State':2634,'Howard':47
+    };
+
+    // Fetched season stats storage (populated by fetchAllSeasonStats)
+    let seasonStats = {};
+
+    // Fetch season stats for all tournament teams from ESPN free API
+    // This analyzes every game played — ESPN aggregates all game data into season stats
+    async function fetchAllSeasonStats(tournamentData) {
+        const allTeams = [];
+        for (const regionName of REGION_NAMES) {
+            for (const team of tournamentData.regions[regionName]) {
+                allTeams.push(team);
             }
-            return null;
+        }
+
+        // Fetch in parallel batches of 8
+        const batchSize = 8;
+        for (let i = 0; i < allTeams.length; i += batchSize) {
+            const batch = allTeams.slice(i, i + batchSize);
+            const promises = batch.map(team => fetchTeamStats(team));
+            await Promise.all(promises);
+        }
+
+        return seasonStats;
+    }
+
+    async function fetchTeamStats(team) {
+        const espnId = ESPN_TEAM_IDS[team.name];
+        if (!espnId) return;
+
+        try {
+            // Fetch team record and info
+            const [teamResp, statsResp] = await Promise.all([
+                fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams/${espnId}`, { signal: AbortSignal.timeout(6000) }),
+                fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams/${espnId}/statistics`, { signal: AbortSignal.timeout(6000) })
+            ]);
+
+            const stats = { name: team.name, seed: team.seed };
+
+            // Parse team record
+            if (teamResp.ok) {
+                const teamData = await teamResp.json();
+                const record = teamData?.team?.record?.items?.[0];
+                if (record) {
+                    const summary = record.summary || '';
+                    const parts = summary.split('-');
+                    if (parts.length >= 2) {
+                        stats.wins = parseInt(parts[0]) || 0;
+                        stats.losses = parseInt(parts[1]) || 0;
+                        stats.winPct = stats.wins / Math.max(1, stats.wins + stats.losses);
+                        stats.totalGames = stats.wins + stats.losses;
+                    }
+                    // Try to get individual stat values from record stats array
+                    if (record.stats) {
+                        for (const s of record.stats) {
+                            if (s.name === 'wins') stats.wins = s.value;
+                            if (s.name === 'losses') stats.losses = s.value;
+                            if (s.name === 'winPercent' || s.name === 'winPct') stats.winPct = s.value;
+                        }
+                    }
+                }
+            }
+
+            // Parse detailed stats (season averages from every game)
+            if (statsResp.ok) {
+                const statsData = await statsResp.json();
+                const categories = statsData?.results?.stats?.categories || statsData?.statistics?.splits?.categories || [];
+
+                for (const cat of categories) {
+                    const catStats = cat.stats || [];
+                    for (const s of catStats) {
+                        switch (s.name) {
+                            case 'avgPoints': case 'pointsPerGame': stats.ppg = s.value; break;
+                            case 'avgPointsAllowed': case 'avgOppPoints': stats.papg = s.value; break;
+                            case 'fieldGoalPct': case 'fgPct': stats.fgPct = s.value; break;
+                            case 'threePointFieldGoalPct': case 'threePtPct': case 'threeFGPct': stats.fg3Pct = s.value; break;
+                            case 'avgRebounds': case 'reboundsPerGame': stats.rpg = s.value; break;
+                            case 'avgAssists': case 'assistsPerGame': stats.apg = s.value; break;
+                            case 'avgTurnovers': case 'turnoversPerGame': stats.tpg = s.value; break;
+                            case 'avgSteals': case 'stealsPerGame': stats.spg = s.value; break;
+                            case 'avgBlocks': case 'blocksPerGame': stats.bpg = s.value; break;
+                            case 'avgFieldGoalsAttempted': case 'fgaPerGame': stats.fga = s.value; break;
+                            case 'avgFreeThrowPct': case 'freeThrowPct': stats.ftPct = s.value; break;
+                        }
+                    }
+                }
+            }
+
+            seasonStats[team.name] = stats;
         } catch (e) {
-            return null;
+            // Silently fail — will use seed-based fallback
         }
     }
+
+    // Calculate advanced power rating from season stats (0-100 scale)
+    // This synthesizes every game's impact into a single strength metric
+    function computeAdvancedRating(teamName) {
+        const s = seasonStats[teamName];
+        if (!s || !s.ppg) return null;
+
+        const confMult = CONFERENCE_STRENGTH[TOURNAMENT_2026.regions.East?.find(t => t.name === teamName)?.conference] ||
+                         CONFERENCE_STRENGTH[TOURNAMENT_2026.regions.West?.find(t => t.name === teamName)?.conference] ||
+                         CONFERENCE_STRENGTH[TOURNAMENT_2026.regions.South?.find(t => t.name === teamName)?.conference] ||
+                         CONFERENCE_STRENGTH[TOURNAMENT_2026.regions.Midwest?.find(t => t.name === teamName)?.conference] ||
+                         CONFERENCE_STRENGTH['default'];
+
+        // Net rating: points scored minus points allowed (SOS-adjusted)
+        const netRating = ((s.ppg || 75) - (s.papg || 72)) * confMult;
+        const normalizedNet = Math.max(0, Math.min(1, (netRating + 15) / 40)); // -15 to +25 → 0 to 1
+
+        // Win percentage
+        const winPct = s.winPct || 0.5;
+
+        // Offensive efficiency proxy: PPG × FG% × conference strength
+        const offEff = ((s.ppg || 70) / 100) * ((s.fgPct || 0.44) / 0.50) * confMult;
+        const normalizedOff = Math.max(0, Math.min(1, (offEff - 0.4) / 0.8));
+
+        // Defensive efficiency (lower PAPG is better)
+        const defEff = 1 - ((s.papg || 72) - 55) / 30; // 55 PAPG = elite, 85 PAPG = bad
+        const normalizedDef = Math.max(0, Math.min(1, defEff));
+
+        // Ball control: assist/turnover ratio
+        const ato = (s.apg || 13) / Math.max(1, s.tpg || 12);
+        const normalizedATO = Math.max(0, Math.min(1, (ato - 0.6) / 1.2));
+
+        // Rebounding impact
+        const rebFactor = Math.max(0, Math.min(1, ((s.rpg || 34) - 28) / 12));
+
+        // Composite: weighted blend of all factors
+        const composite = (
+            normalizedNet * 0.30 +    // Net rating is best predictor
+            winPct * 0.25 +            // Win % is second best
+            normalizedOff * 0.15 +     // Offensive efficiency
+            normalizedDef * 0.15 +     // Defensive efficiency
+            normalizedATO * 0.08 +     // Ball security
+            rebFactor * 0.07           // Rebounding
+        );
+
+        // Scale to 0-100
+        return Math.round(Math.max(30, Math.min(99, composite * 110)));
+    }
+
+    function getSeasonStats() { return seasonStats; }
+    function hasSeasonStats() { return Object.keys(seasonStats).length > 0; }
 
     return {
         ROUND1_HISTORICAL, SEED_STRENGTH, SEED_ROUND_REACH,
         SEED_MATCHUP_HISTORY, AVG_UPSETS_PER_ROUND,
-        CONFERENCE_STRENGTH, SCORING_SYSTEMS,
+        CONFERENCE_STRENGTH, SCORING_SYSTEMS, ESPN_TEAM_IDS,
         BRACKET_ORDER, REGION_NAMES, ROUND_NAMES, ROUND_SHORT,
-        TOURNAMENT_2026, getTeamsInBracketOrder, fetchLiveData
+        TOURNAMENT_2026, getTeamsInBracketOrder,
+        fetchAllSeasonStats, computeAdvancedRating, getSeasonStats, hasSeasonStats
     };
 })();

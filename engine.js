@@ -14,16 +14,28 @@ const PredictionEngine = (() => {
     }
 
     // Get adjusted strength for a team
+    // Uses REAL season stats (every game analyzed) when available, falls back to seed-based
     function getTeamStrength(team) {
         if (!team) return 0.5;
-        let base = MarchMadnessData.SEED_STRENGTH[team.seed] || 0.5;
 
-        // Conference strength multiplier (2-8% effect)
+        // If we have real season stats, use advanced rating (data from every game played)
+        const advRating = MarchMadnessData.computeAdvancedRating(team.name);
+        if (advRating !== null) {
+            // Advanced rating is 30-99 scale from real game data
+            // Convert to strength probability (0.05 - 0.98)
+            const statsStrength = advRating / 105;
+
+            // Blend: 65% real stats + 20% seed baseline + 15% historical
+            const seedBase = MarchMadnessData.SEED_STRENGTH[team.seed] || 0.5;
+            return Math.max(0.03, Math.min(0.97, statsStrength * 0.65 + seedBase * 0.20 + (team.rating || 75) / 100 * 0.15));
+        }
+
+        // Fallback: seed-based model with conference adjustment
+        let base = MarchMadnessData.SEED_STRENGTH[team.seed] || 0.5;
         const confMult = MarchMadnessData.CONFERENCE_STRENGTH[team.conference]
             || MarchMadnessData.CONFERENCE_STRENGTH['default'];
         base *= confMult;
 
-        // Team rating adjustment (rating 0-100 → small adjustment)
         if (team.rating != null) {
             const ratingAdj = (team.rating - 75) / 250;
             base = Math.max(0.02, Math.min(0.98, base + ratingAdj));
@@ -66,7 +78,7 @@ const PredictionEngine = (() => {
         };
     }
 
-    // Generate per-pick explanation
+    // Generate per-pick explanation — uses real season stats when available
     function getPickExplanation(teamA, teamB, winner) {
         const prob = getWinProbability(winner, winner === teamA ? teamB : teamA);
         const loser = winner === teamA ? teamB : teamA;
@@ -77,28 +89,59 @@ const PredictionEngine = (() => {
 
         let explanation = '';
 
-        if (prob > 0.9) {
-            explanation = `${winner.name} is an overwhelming favorite. Historically, ${winner.seed}-seeds beat ${loser.seed}-seeds over 90% of the time. `;
-        } else if (prob > 0.75) {
-            explanation = `${winner.name} is a strong favorite. The seed advantage is significant. `;
-        } else if (prob > 0.6) {
-            explanation = `${winner.name} has a moderate edge. `;
-            if (isUpset) {
-                explanation += `While ${loser.name} has the higher seed, ${winner.name}'s metrics suggest they're the stronger team. `;
+        // Real stats-based explanation
+        const statsW = MarchMadnessData.getSeasonStats()[winner.name];
+        const statsL = MarchMadnessData.getSeasonStats()[loser.name];
+
+        if (statsW && statsL && statsW.ppg && statsL.ppg) {
+            const wRecord = statsW.wins && statsW.losses ? `${statsW.wins}-${statsW.losses}` : '';
+            const lRecord = statsL.wins && statsL.losses ? `${statsL.wins}-${statsL.losses}` : '';
+
+            if (prob > 0.75) {
+                explanation = `${winner.name}${wRecord ? ' ('+wRecord+')' : ''} is a strong favorite. `;
+            } else if (prob > 0.6) {
+                explanation = `${winner.name}${wRecord ? ' ('+wRecord+')' : ''} has a moderate edge. `;
+            } else if (prob > 0.52) {
+                explanation = `Close matchup. `;
+            } else {
+                explanation = `Near coin flip. `;
             }
-        } else if (prob > 0.52) {
-            explanation = `This is a close matchup. `;
-            if (winner.rating > loser.rating) {
-                explanation += `${winner.name}'s slightly higher efficiency rating gives them the edge. `;
+
+            // Stats comparison
+            if (statsW.ppg && statsL.ppg) {
+                explanation += `${winner.name} averages ${statsW.ppg.toFixed(1)} PPG vs ${loser.name}'s ${statsL.ppg.toFixed(1)}. `;
+            }
+            if (statsW.papg && statsL.papg) {
+                const betterDef = statsW.papg < statsL.papg ? winner : loser;
+                explanation += `${betterDef.name} has the better defense (${Math.min(statsW.papg, statsL.papg).toFixed(1)} PPG allowed). `;
+            }
+            if (statsW.fgPct && statsL.fgPct) {
+                const betterShoot = statsW.fgPct > statsL.fgPct ? winner : loser;
+                explanation += `${betterShoot.name} shoots ${(Math.max(statsW.fgPct, statsL.fgPct) * 100).toFixed(1)}% FG. `;
+            }
+            if (isUpset) {
+                explanation += `Despite the seed difference, ${winner.name}'s season stats suggest they're the stronger team. `;
             }
         } else {
-            explanation = `This is essentially a coin flip. `;
+            // Fallback to seed-based explanation
+            if (prob > 0.9) {
+                explanation = `${winner.name} is an overwhelming favorite. Historically, ${winner.seed}-seeds beat ${loser.seed}-seeds over 90% of the time. `;
+            } else if (prob > 0.75) {
+                explanation = `${winner.name} is a strong favorite. The seed advantage is significant. `;
+            } else if (prob > 0.6) {
+                explanation = `${winner.name} has a moderate edge. `;
+                if (isUpset) explanation += `${winner.name}'s metrics suggest they're the stronger team. `;
+            } else if (prob > 0.52) {
+                explanation = `Close matchup. ${winner.name}'s slightly higher efficiency gives them the edge. `;
+            } else {
+                explanation = `Essentially a coin flip. `;
+            }
         }
 
         // Conference factor
         if (Math.abs(confA - confB) > 0.05) {
             const stronger = confA > confB ? teamA : teamB;
-            explanation += `${stronger.name} benefits from playing in the stronger ${stronger.conference} conference. `;
+            explanation += `${stronger.name} benefits from the stronger ${stronger.conference}. `;
         }
 
         // Historical note
