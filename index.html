@@ -38,6 +38,7 @@
             <button class="nav-btn" data-view="analysis" aria-label="Analysis">Analysis</button>
             <button class="nav-btn" data-view="h2h" aria-label="Head to Head">Head to Head</button>
             <button class="nav-btn" data-view="simulate" aria-label="Simulate">Simulate</button>
+            <button class="nav-btn" data-view="results" aria-label="Results">Results</button>
         </div>
         <div class="nav-right">
             <button class="icon-btn" id="btn-seed-legend" title="Seed History" aria-label="Seed legend">?</button>
@@ -56,6 +57,7 @@
         <button class="mobile-nav-btn" data-view="analysis">Analysis</button>
         <button class="mobile-nav-btn" data-view="h2h">H2H</button>
         <button class="mobile-nav-btn" data-view="simulate">Sim</button>
+        <button class="mobile-nav-btn" data-view="results">Results</button>
     </nav>
 
     <main class="main" role="main" id="main-content">
@@ -77,6 +79,12 @@
                 </div>
                 <div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="63"><div class="progress-fill" id="progress-fill"></div></div>
                 <span class="progress-text" id="progress-text">0 / 63</span>
+            </div>
+
+            <!-- First Four Play-In Games -->
+            <div class="first-four-section" id="first-four-playin">
+                <div class="first-four-title">First Four &mdash; Dayton, OH</div>
+                <div class="first-four-games" id="first-four-games"></div>
             </div>
 
             <!-- Full NCAA/ESPN-style bracket (desktop) -->
@@ -125,6 +133,11 @@
         <!-- SIMULATE -->
         <div class="view" id="view-simulate"><div id="simulate-content">
             <div class="empty-state"><div class="icon">&#127922;</div><h3>Monte Carlo Simulation</h3><p>Running 5,000 simulations...</p><div class="loading-spinner" style="margin:16px auto;"></div></div>
+        </div></div>
+
+        <!-- RESULTS TRACKING -->
+        <div class="view" id="view-results"><div id="results-content">
+            <div class="empty-state"><div class="icon">&#9989;</div><h3>Results Tracking</h3><p>Enter actual tournament results to see how your bracket scored. Mark winners as games are played.</p></div>
         </div></div>
 
     </main>

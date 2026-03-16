@@ -31,8 +31,8 @@ const App = (() => {
         loadSettings(); applySettings(); initUserBracket(); loadBracket();
         setupNav(); setupRegionTabs(); setupControls(); setupSettings();
         setupSeedLegend(); setupKeysModal(); setupOnboarding(); setupKeyboard();
-        setupExport(); setupShare(); setupMultipleBrackets(); setupSwipe();
-        initBackground(); renderFullBracket(); renderBracket(); renderFinalFour(); renderBotBracket(); updateProgress();
+        setupExport(); setupShare(); setupMultipleBrackets(); setupSwipe(); setupResults();
+        initBackground(); renderFirstFour(); renderFullBracket(); renderBracket(); renderFinalFour(); renderBotBracket(); updateProgress();
 
         // Fetch real season stats from ESPN (analyzes every game played this season)
         // Runs in background — predictions auto-upgrade when stats arrive
@@ -66,6 +66,186 @@ const App = (() => {
         }
     }
 
+    // ---- First Four Play-In Games ----
+    let firstFourPicks = {};
+    function renderFirstFour() {
+        const container = document.getElementById('first-four-games');
+        if (!container) return;
+        container.innerHTML = '';
+        const saved = JSON.parse(localStorage.getItem('mm-first-four') || '{}');
+        firstFourPicks = saved;
+
+        for (const game of MarchMadnessData.FIRST_FOUR) {
+            const card = document.createElement('div');
+            card.className = 'ff4-game';
+            const box = document.createElement('div');
+            box.className = 'matchup-pair';
+            const label = document.createElement('div');
+            label.className = 'ff4-label';
+            label.textContent = `${game.seed}-seed \u2022 ${game.region}`;
+            box.appendChild(label);
+
+            const key = `${game.teamA}_${game.teamB}`;
+            const winner = firstFourPicks[key] || null;
+
+            for (const [name, conf] of [[game.teamA, game.confA], [game.teamB, game.confB]]) {
+                const slot = document.createElement('div');
+                slot.className = 'team-slot';
+                slot.setAttribute('tabindex', '0');
+                slot.setAttribute('role', 'button');
+                if (winner === name) slot.classList.add('winner');
+                if (winner && winner !== name) slot.classList.add('eliminated');
+                slot.innerHTML = `<span class="team-seed" data-tier="4">${game.seed}</span><span class="team-name">${name}</span><span style="font-size:.58rem;color:var(--text-muted)">${conf}</span>`;
+                const pick = () => {
+                    firstFourPicks[key] = name;
+                    localStorage.setItem('mm-first-four', JSON.stringify(firstFourPicks));
+                    playClick();
+                    renderFirstFour();
+                };
+                slot.addEventListener('click', pick);
+                slot.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+                if (name !== game.teamA) slot.style.borderTop = '1px solid var(--border)';
+                box.appendChild(slot);
+            }
+            card.appendChild(box);
+            container.appendChild(card);
+        }
+    }
+
+    // ---- Results Tracking ----
+    let actualResults = {};
+    function setupResults() {
+        // Load saved results
+        actualResults = JSON.parse(localStorage.getItem('mm-results') || '{}');
+    }
+
+    function renderResults() {
+        const container = document.getElementById('results-content');
+        if (totalPicks < 1) {
+            container.innerHTML = '<div class="empty-state"><div class="icon">&#9989;</div><h3>Fill in your bracket first</h3><p>Make picks, then enter actual game results here to track your score.</p></div>';
+            return;
+        }
+
+        // Build results UI
+        const scoringSystem = MarchMadnessData.SCORING_SYSTEMS[settings.scoring];
+        const roundNames = MarchMadnessData.ROUND_NAMES;
+        let totalPoints = 0, correctPicks = 0, incorrectPicks = 0, pendingPicks = 0;
+        const items = [];
+
+        // Collect all user picks
+        for (const rn of MarchMadnessData.REGION_NAMES) {
+            const rounds = userBracket.regions[rn];
+            const teams = tournamentData.regions[rn];
+            const ordered = MarchMadnessData.getTeamsInBracketOrder(teams);
+            let prevTeams = ordered;
+
+            for (let r = 0; r < rounds.length; r++) {
+                for (let m = 0; m < rounds[r].length; m++) {
+                    const pick = rounds[r][m];
+                    if (!pick) continue;
+
+                    const tA = prevTeams[m * 2];
+                    const tB = prevTeams[m * 2 + 1];
+                    if (!tA || !tB) continue;
+
+                    const gameKey = `${rn}_R${r}_${m}`;
+                    const actual = actualResults[gameKey] || null;
+
+                    let status = 'pending';
+                    let pts = 0;
+                    if (actual) {
+                        if (actual === pick.name) {
+                            status = 'correct';
+                            pts = scoringSystem.points[r] || 0;
+                            if (scoringSystem.seedMultiplier) pts *= pick.seed;
+                            if (scoringSystem.upsetMultiplier && pick.seed > Math.min(tA.seed, tB.seed)) pts *= 1.5;
+                            correctPicks++;
+                            totalPoints += pts;
+                        } else {
+                            status = 'incorrect';
+                            incorrectPicks++;
+                        }
+                    } else {
+                        pendingPicks++;
+                    }
+
+                    items.push({ pick, loser: pick === tA ? tB : tA, round: r, region: rn, gameKey, actual, status, pts, tA, tB });
+                }
+                prevTeams = rounds[r];
+            }
+        }
+
+        // FF + Championship
+        for (const [game, label, r] of [
+            [userBracket.finalFour.game1, 'FF1', 4],
+            [userBracket.finalFour.game2, 'FF2', 4],
+            [userBracket.championship, 'Champ', 5]
+        ]) {
+            if (game.winner && game.teamA && game.teamB) {
+                const gameKey = `${label}`;
+                const actual = actualResults[gameKey] || null;
+                let status = 'pending', pts = 0;
+                if (actual) {
+                    if (actual === game.winner.name) {
+                        status = 'correct'; pts = scoringSystem.points[r] || 0;
+                        if (scoringSystem.seedMultiplier) pts *= game.winner.seed;
+                        correctPicks++; totalPoints += pts;
+                    } else { status = 'incorrect'; incorrectPicks++; }
+                } else { pendingPicks++; }
+                items.push({ pick: game.winner, loser: game.winner === game.teamA ? game.teamB : game.teamA, round: r, region: label, gameKey, actual, status, pts, tA: game.teamA, tB: game.teamB });
+            }
+        }
+
+        const totalAnswered = correctPicks + incorrectPicks;
+        const accuracy = totalAnswered > 0 ? ((correctPicks / totalAnswered) * 100).toFixed(0) : '-';
+
+        container.innerHTML = `
+            <div class="results-score">
+                <div class="big-score">${totalPoints}</div>
+                <div class="score-label">Points (${MarchMadnessData.SCORING_SYSTEMS[settings.scoring].name})</div>
+                <div style="margin-top:6px;font-size:.78rem;color:var(--text-secondary)">${correctPicks} correct, ${incorrectPicks} wrong, ${pendingPicks} pending &mdash; ${accuracy}% accuracy</div>
+            </div>
+            <div class="results-controls">
+                <button class="btn btn-sm" id="btn-clear-results">Clear All Results</button>
+            </div>
+            <div class="analysis-card full-width">
+                <h3>Game Results &mdash; Click to mark actual winners</h3>
+                <div class="pick-list">
+                    ${items.map(it => `
+                        <div class="result-item ${it.status}">
+                            <span class="round-badge">${MarchMadnessData.ROUND_SHORT[it.round]}</span>
+                            <span style="font-weight:600">(${it.pick.seed}) ${it.pick.name}</span>
+                            <span class="vs-text">vs (${it.loser.seed}) ${it.loser.name}</span>
+                            ${it.status === 'correct' ? `<span class="prob-badge safe">+${it.pts}</span>` : ''}
+                            ${it.status === 'incorrect' ? `<span class="prob-badge risky">X</span>` : ''}
+                            <button class="btn btn-sm" data-key="${it.gameKey}" data-a="${it.tA.name}" data-b="${it.tB.name}" onclick="App.markResult(this)" style="margin-left:auto;font-size:.6rem">${it.actual ? it.actual : 'Set Winner'}</button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        document.getElementById('btn-clear-results')?.addEventListener('click', () => {
+            actualResults = {};
+            localStorage.setItem('mm-results', '{}');
+            renderResults();
+            showToast('Results cleared');
+        });
+    }
+
+    function markResult(btn) {
+        const key = btn.dataset.key;
+        const a = btn.dataset.a;
+        const b = btn.dataset.b;
+        const current = actualResults[key];
+        // Cycle: none → A → B → none
+        if (!current) actualResults[key] = a;
+        else if (current === a) actualResults[key] = b;
+        else { delete actualResults[key]; }
+        localStorage.setItem('mm-results', JSON.stringify(actualResults));
+        renderResults();
+    }
+
     function initUserBracket() {
         userBracket = { regions:{}, finalFour:{game1:{teamA:null,teamB:null,winner:null},game2:{teamA:null,teamB:null,winner:null}}, championship:{teamA:null,teamB:null,winner:null} };
         for (const r of MarchMadnessData.REGION_NAMES) userBracket.regions[r] = [Array(8).fill(null),Array(4).fill(null),Array(2).fill(null),Array(1).fill(null)];
@@ -91,7 +271,7 @@ const App = (() => {
         currentView=v;
         document.querySelectorAll('.nav-btn,.mobile-nav-btn').forEach(b => b.classList.toggle('active',b.dataset.view===v));
         document.querySelectorAll('.view').forEach(el => el.classList.toggle('active',el.id===`view-${v}`));
-        if(v==='analysis') renderAnalysis(); if(v==='h2h') renderH2H(); if(v==='simulate') runSim();
+        if(v==='analysis') renderAnalysis(); if(v==='h2h') renderH2H(); if(v==='simulate') runSim(); if(v==='results') renderResults();
     }
 
     // ---- Region tabs ----
@@ -187,6 +367,21 @@ const App = (() => {
                 rEl.appendChild(mu);
             }
             region.appendChild(rEl);
+
+            // Add connector column between rounds
+            if (round < 3) {
+                const connCol = document.createElement('div');
+                connCol.className = 'bracket-connectors';
+                const nextCount = matchups[round + 1];
+                for (let c = 0; c < nextCount; c++) {
+                    const conn = document.createElement('div');
+                    conn.className = 'bracket-connector';
+                    conn.appendChild(Object.assign(document.createElement('div'), { className: 'conn-top' }));
+                    conn.appendChild(Object.assign(document.createElement('div'), { className: 'conn-bot' }));
+                    connCol.appendChild(conn);
+                }
+                region.appendChild(connCol);
+            }
         }
         return region;
     }
@@ -915,5 +1110,5 @@ const App = (() => {
     }
 
     document.addEventListener('DOMContentLoaded',init);
-    return { switchView, showToast };
+    return { switchView, showToast, markResult };
 })();

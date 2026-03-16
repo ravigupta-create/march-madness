@@ -89,6 +89,14 @@ const MarchMadnessData = (() => {
     const ROUND_NAMES = ['Round of 64', 'Round of 32', 'Sweet 16', 'Elite 8', 'Final Four', 'Championship'];
     const ROUND_SHORT = ['R64', 'R32', 'S16', 'E8', 'FF', 'CHAMP'];
 
+    // First Four play-in games (March 17-18, Dayton OH)
+    const FIRST_FOUR = [
+        { teamA: 'NC State', teamB: 'Texas', seed: 11, region: 'West', confA: 'ACC', confB: 'SEC' },
+        { teamA: 'SMU', teamB: 'Miami OH', seed: 11, region: 'Midwest', confA: 'ACC', confB: 'MAC' },
+        { teamA: 'Howard', teamB: 'UMBC', seed: 16, region: 'Midwest', confA: 'MEAC', confB: 'America East' },
+        { teamA: 'Lehigh', teamB: 'Prairie View', seed: 16, region: 'South', confA: 'Patriot', confB: 'SWAC' }
+    ];
+
     // 2026 NCAA Tournament teams — Official bracket from ESPN/NCAA
     // First Four play-in games (March 17-18): NC State/Texas (11), SMU/Miami OH (11), Howard/UMBC (16), Lehigh/Prairie View (16)
     const TOURNAMENT_2026 = {
@@ -261,25 +269,39 @@ const MarchMadnessData = (() => {
             // Parse detailed stats (season averages from every game)
             if (statsResp.ok) {
                 const statsData = await statsResp.json();
-                const categories = statsData?.results?.stats?.categories || statsData?.statistics?.splits?.categories || [];
+                // ESPN returns stats in multiple possible structures
+                const categories = statsData?.results?.stats?.categories
+                    || statsData?.statistics?.splits?.categories
+                    || statsData?.stats?.categories
+                    || [];
 
+                // Flatten all stats from all categories
+                const allStats = [];
                 for (const cat of categories) {
-                    const catStats = cat.stats || [];
-                    for (const s of catStats) {
-                        switch (s.name) {
-                            case 'avgPoints': case 'pointsPerGame': stats.ppg = s.value; break;
-                            case 'avgPointsAllowed': case 'avgOppPoints': stats.papg = s.value; break;
-                            case 'fieldGoalPct': case 'fgPct': stats.fgPct = s.value; break;
-                            case 'threePointFieldGoalPct': case 'threePtPct': case 'threeFGPct': stats.fg3Pct = s.value; break;
-                            case 'avgRebounds': case 'reboundsPerGame': stats.rpg = s.value; break;
-                            case 'avgAssists': case 'assistsPerGame': stats.apg = s.value; break;
-                            case 'avgTurnovers': case 'turnoversPerGame': stats.tpg = s.value; break;
-                            case 'avgSteals': case 'stealsPerGame': stats.spg = s.value; break;
-                            case 'avgBlocks': case 'blocksPerGame': stats.bpg = s.value; break;
-                            case 'avgFieldGoalsAttempted': case 'fgaPerGame': stats.fga = s.value; break;
-                            case 'avgFreeThrowPct': case 'freeThrowPct': stats.ftPct = s.value; break;
-                        }
+                    for (const s of (cat.stats || [])) allStats.push(s);
+                }
+                // Also check if stats are directly on splits
+                const splits = statsData?.results?.stats?.splits || statsData?.statistics?.splits || statsData?.splits || [];
+                for (const split of (Array.isArray(splits) ? splits : [])) {
+                    for (const cat of (split.categories || [])) {
+                        for (const s of (cat.stats || [])) allStats.push(s);
                     }
+                }
+
+                for (const s of allStats) {
+                    const n = (s.name || s.abbreviation || '').toLowerCase();
+                    const v = parseFloat(s.value || s.displayValue || 0);
+                    if (isNaN(v)) continue;
+                    if (n.includes('avgpoints') || n === 'ppg' || n === 'pointspergame' || n === 'pts') stats.ppg = v;
+                    else if (n.includes('opppoints') || n.includes('pointsallowed') || n === 'papg' || n === 'oppppg') stats.papg = v;
+                    else if (n.includes('fieldgoalpct') || n === 'fgpct' || n === 'fg%') stats.fgPct = v > 1 ? v / 100 : v;
+                    else if (n.includes('threep') || n.includes('3pt') || n === '3p%') stats.fg3Pct = v > 1 ? v / 100 : v;
+                    else if (n.includes('rebound') || n === 'rpg' || n === 'reb') stats.rpg = v;
+                    else if (n.includes('assist') || n === 'apg' || n === 'ast') stats.apg = v;
+                    else if (n.includes('turnover') || n === 'tpg' || n === 'to' || n === 'tovpg') stats.tpg = v;
+                    else if (n.includes('steal') || n === 'spg' || n === 'stl') stats.spg = v;
+                    else if (n.includes('block') || n === 'bpg' || n === 'blk') stats.bpg = v;
+                    else if (n.includes('freethrow') || n === 'ft%' || n === 'ftpct') stats.ftPct = v > 1 ? v / 100 : v;
                 }
             }
 
@@ -345,7 +367,7 @@ const MarchMadnessData = (() => {
         SEED_MATCHUP_HISTORY, AVG_UPSETS_PER_ROUND,
         CONFERENCE_STRENGTH, SCORING_SYSTEMS, ESPN_TEAM_IDS,
         BRACKET_ORDER, REGION_NAMES, ROUND_NAMES, ROUND_SHORT,
-        TOURNAMENT_2026, getTeamsInBracketOrder,
+        FIRST_FOUR, TOURNAMENT_2026, getTeamsInBracketOrder,
         fetchAllSeasonStats, computeAdvancedRating, getSeasonStats, hasSeasonStats
     };
 })();

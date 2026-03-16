@@ -115,20 +115,68 @@ body[data-particles="off"] #bg-canvas { opacity:0; }
 .fb-center .fb-champion .champ-name { font-size:1rem; font-weight:900; color:var(--accent-gold); }
 .fb-center .fb-champion .champ-seed { font-size:.68rem; color:var(--text-secondary); }
 
-/* Connector lines — left side (right-pointing) */
+/* ---- Bracket Connector Lines (ESPN-style) ---- */
+/* Connector columns between rounds */
+.bracket-connectors { display:flex; flex-direction:column; justify-content:space-around; width:12px; flex-shrink:0; }
+.bracket-connector {
+    flex:1; display:flex; align-items:center; position:relative;
+}
+/* Left side: right-pointing bracket connector */
+.fb-region:not(.reversed) .bracket-connector::before {
+    content:''; position:absolute; top:25%; bottom:25%; right:0; width:0; border-right:1px solid var(--border);
+}
+.fb-region:not(.reversed) .bracket-connector::after {
+    content:''; position:absolute; right:0; top:50%; width:4px; height:1px; background:var(--border);
+}
+.fb-region:not(.reversed) .bracket-connector .conn-top {
+    position:absolute; top:25%; right:0; width:6px; height:1px; background:var(--border);
+}
+.fb-region:not(.reversed) .bracket-connector .conn-bot {
+    position:absolute; bottom:25%; right:0; width:6px; height:1px; background:var(--border);
+}
+/* Right side: left-pointing bracket connector */
+.fb-region.reversed .bracket-connector::before {
+    content:''; position:absolute; top:25%; bottom:25%; left:0; width:0; border-left:1px solid var(--border);
+}
+.fb-region.reversed .bracket-connector::after {
+    content:''; position:absolute; left:0; top:50%; width:4px; height:1px; background:var(--border);
+}
+.fb-region.reversed .bracket-connector .conn-top {
+    position:absolute; top:25%; left:0; width:6px; height:1px; background:var(--border);
+}
+.fb-region.reversed .bracket-connector .conn-bot {
+    position:absolute; bottom:25%; left:0; width:6px; height:1px; background:var(--border);
+}
+/* Horizontal lines from matchups to connectors */
 .fb-region:not(.reversed) .bracket-round:not(:last-of-type) .matchup::after {
-    content:''; position:absolute; right:-1px; top:50%; width:3px; height:1px; background:var(--border); z-index:1;
+    content:''; position:absolute; right:-2px; top:50%; width:4px; height:1px; background:var(--border); z-index:1;
 }
 .fb-region:not(.reversed) .bracket-round:not(:first-of-type) .matchup::before {
-    content:''; position:absolute; left:-1px; top:50%; width:3px; height:1px; background:var(--border); z-index:1;
+    content:''; position:absolute; left:-2px; top:50%; width:4px; height:1px; background:var(--border); z-index:1;
 }
-/* Connector lines — right side (left-pointing) */
 .fb-region.reversed .bracket-round:not(:last-of-type) .matchup::after {
-    content:''; position:absolute; left:-1px; top:50%; width:3px; height:1px; background:var(--border); z-index:1;
+    content:''; position:absolute; left:-2px; top:50%; width:4px; height:1px; background:var(--border); z-index:1;
 }
 .fb-region.reversed .bracket-round:not(:first-of-type) .matchup::before {
-    content:''; position:absolute; right:-1px; top:50%; width:3px; height:1px; background:var(--border); z-index:1;
+    content:''; position:absolute; right:-2px; top:50%; width:4px; height:1px; background:var(--border); z-index:1;
 }
+
+/* ---- First Four Section ---- */
+.first-four-section { margin-bottom:14px; padding:12px; background:var(--bg-card); border:1px solid var(--border); border-radius:8px; }
+.first-four-title { font-size:.82rem; font-weight:800; color:var(--accent-orange); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; text-align:center; }
+.first-four-games { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+.ff4-game { min-width:160px; }
+.ff4-game .ff4-label { font-size:.6rem; color:var(--text-muted); text-align:center; padding:3px; font-weight:600; border-bottom:1px solid var(--border); }
+
+/* ---- Results Tracking ---- */
+.results-controls { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-bottom:12px; }
+.result-item { display:flex; align-items:center; gap:6px; padding:5px 8px; border-radius:6px; font-size:.76rem; margin-bottom:3px; }
+.result-item.correct { background:rgba(34,197,94,.08); border-left:3px solid var(--safe); }
+.result-item.incorrect { background:rgba(239,68,68,.08); border-left:3px solid var(--risky); }
+.result-item.pending { background:rgba(128,128,128,.04); border-left:3px solid var(--text-muted); }
+.results-score { text-align:center; padding:16px; margin-bottom:12px; }
+.results-score .big-score { font-size:2.2rem; font-weight:900; color:var(--accent-gold); font-family:var(--mono); }
+.results-score .score-label { font-size:.78rem; color:var(--text-secondary); }
 
 /* Divider between top and bottom regions */
 .fb-divider { height:1px; background:var(--border); margin:3px 0; opacity:.5; }
