@@ -32,7 +32,7 @@ const App = (() => {
         setupNav(); setupRegionTabs(); setupControls(); setupSettings();
         setupSeedLegend(); setupKeysModal(); setupOnboarding(); setupKeyboard();
         setupExport(); setupShare(); setupMultipleBrackets(); setupSwipe();
-        initBackground(); renderBracket(); renderFinalFour(); renderBotBracket(); updateProgress();
+        initBackground(); renderFullBracket(); renderBracket(); renderFinalFour(); renderBotBracket(); updateProgress();
         // Bracket name
         const nameInput = document.getElementById('bracket-name-input');
         const savedName = localStorage.getItem('mm-bracket-name');
@@ -55,7 +55,7 @@ const App = (() => {
         for (const g of [userBracket.finalFour.game1,userBracket.finalFour.game2]) { if(g.teamA) g.teamA=findTeam(g.teamA.name)||g.teamA; if(g.teamB) g.teamB=findTeam(g.teamB.name)||g.teamB; if(g.winner) g.winner=findTeam(g.winner.name)||g.winner; }
         const c=userBracket.championship; if(c.teamA) c.teamA=findTeam(c.teamA.name)||c.teamA; if(c.teamB) c.teamB=findTeam(c.teamB.name)||c.teamB; if(c.winner) c.winner=findTeam(c.winner.name)||c.winner;
     }
-    function refreshAll() { renderBracket(); renderFinalFour(); updateProgress(); if(settings.autosave) saveBracket(); showRegion(activeRegion); }
+    function refreshAll() { renderFullBracket(); renderBracket(); renderFinalFour(); updateProgress(); if(settings.autosave) saveBracket(); showRegion(activeRegion); }
 
     // ---- Nav ----
     function setupNav() {
@@ -86,7 +86,152 @@ const App = (() => {
     // ---- Seed tier ----
     function seedTier(s) { return s<=2?'1':s<=4?'2':s<=8?'3':'4'; }
 
-    // ---- Bracket render ----
+    // ---- Full NCAA/ESPN Bracket (Desktop) ----
+    function renderFullBracket() {
+        const fb = document.getElementById('full-bracket');
+        if (!fb) return;
+        fb.innerHTML = '';
+
+        const R = MarchMadnessData.REGION_NAMES;
+        // Layout: Left side = Region 0 (top) + Region 1 (bottom), flowing right
+        //         Right side = Region 2 (top) + Region 3 (bottom), flowing left (reversed)
+        //         Center = Final Four + Championship
+
+        // Left side
+        const leftSide = document.createElement('div');
+        leftSide.className = 'fb-side';
+        leftSide.appendChild(buildFBRegion(R[0], false));
+        const divL = document.createElement('div'); divL.className = 'fb-divider'; leftSide.appendChild(divL);
+        leftSide.appendChild(buildFBRegion(R[1], false));
+        fb.appendChild(leftSide);
+
+        // Center
+        const center = document.createElement('div');
+        center.className = 'fb-center';
+        center.appendChild(buildFBCenter());
+        fb.appendChild(center);
+
+        // Right side
+        const rightSide = document.createElement('div');
+        rightSide.className = 'fb-side';
+        rightSide.appendChild(buildFBRegion(R[2], true));
+        const divR = document.createElement('div'); divR.className = 'fb-divider'; rightSide.appendChild(divR);
+        rightSide.appendChild(buildFBRegion(R[3], true));
+        fb.appendChild(rightSide);
+    }
+
+    function buildFBRegion(regionName, reversed) {
+        const region = document.createElement('div');
+        region.className = 'fb-region' + (reversed ? ' reversed' : '');
+
+        // Region label
+        const label = document.createElement('div');
+        label.className = 'fb-region-label';
+        label.textContent = regionName;
+        region.appendChild(label);
+
+        const teams = tournamentData.regions[regionName];
+        const ordered = MarchMadnessData.getTeamsInBracketOrder(teams);
+        const matchups = [8, 4, 2, 1];
+        const roundNames = MarchMadnessData.ROUND_NAMES.slice(0, 4);
+
+        for (let round = 0; round < 4; round++) {
+            const rEl = document.createElement('div');
+            rEl.className = 'bracket-round';
+
+            const hd = document.createElement('div');
+            hd.className = 'round-header';
+            hd.textContent = round < 2 ? MarchMadnessData.ROUND_SHORT[round] : roundNames[round];
+            rEl.appendChild(hd);
+
+            for (let m = 0; m < matchups[round]; m++) {
+                const mu = document.createElement('div');
+                mu.className = 'matchup';
+                const pair = document.createElement('div');
+                pair.className = 'matchup-pair';
+
+                let tA, tB;
+                if (round === 0) { tA = ordered[m * 2]; tB = ordered[m * 2 + 1]; }
+                else { tA = userBracket.regions[regionName][round - 1][m * 2] || null; tB = userBracket.regions[regionName][round - 1][m * 2 + 1] || null; }
+                const w = userBracket.regions[regionName][round][m];
+
+                pair.appendChild(mkSlot(tA, w, regionName, round, m, tB));
+                pair.appendChild(mkSlot(tB, w, regionName, round, m, tA));
+                mu.appendChild(pair);
+                rEl.appendChild(mu);
+            }
+            region.appendChild(rEl);
+        }
+        return region;
+    }
+
+    function buildFBCenter() {
+        const c = document.createElement('div');
+        const ff = userBracket.finalFour;
+        const R = MarchMadnessData.REGION_NAMES;
+
+        // FF Game 1 (left regions)
+        const ffLabel1 = document.createElement('div');
+        ffLabel1.className = 'fb-ff-label';
+        ffLabel1.textContent = 'Final Four';
+        c.appendChild(ffLabel1);
+        c.appendChild(mkFFCompact(ff.game1, `${R[0]} / ${R[1]}`, 'ff1'));
+
+        // Championship
+        const champLabel = document.createElement('div');
+        champLabel.className = 'fb-champ-label';
+        champLabel.textContent = 'Championship';
+        c.appendChild(champLabel);
+        c.appendChild(mkFFCompact(userBracket.championship, 'Title Game', 'champ'));
+
+        // Champion display
+        if (userBracket.championship.winner) {
+            const chd = document.createElement('div');
+            chd.className = 'fb-champion';
+            chd.innerHTML = `<div class="champ-name">${userBracket.championship.winner.name}</div><div class="champ-seed">#${userBracket.championship.winner.seed}</div>`;
+            c.appendChild(chd);
+        }
+
+        // FF Game 2 (right regions)
+        const ffLabel2 = document.createElement('div');
+        ffLabel2.className = 'fb-ff-label';
+        ffLabel2.style.marginTop = '4px';
+        ffLabel2.textContent = 'Final Four';
+        c.appendChild(ffLabel2);
+        c.appendChild(mkFFCompact(ff.game2, `${R[2]} / ${R[3]}`, 'ff2'));
+
+        return c;
+    }
+
+    function mkFFCompact(game, label, id) {
+        const box = document.createElement('div');
+        box.className = 'matchup-pair';
+        box.style.minWidth = '125px';
+        if (id === 'champ') { box.style.borderColor = 'var(--accent-gold)'; box.style.boxShadow = '0 0 8px rgba(255,215,0,.1)'; }
+
+        for (const [tm, isA] of [[game.teamA, true], [game.teamB, false]]) {
+            const s = document.createElement('div');
+            s.className = 'team-slot';
+            if (isA) s.style.borderBottom = '1px solid var(--border)';
+            if (!tm) { s.classList.add('empty'); s.innerHTML = '<span class="team-name" style="font-size:.65rem">TBD</span>'; }
+            else {
+                if (game.winner?.name === tm.name) s.classList.add('winner');
+                if (game.winner && game.winner.name !== tm.name) s.classList.add('eliminated');
+                s.setAttribute('tabindex', '0'); s.setAttribute('role', 'button');
+                const other = isA ? game.teamB : game.teamA;
+                let probHTML = '';
+                if (other) { const p = PredictionEngine.getWinProbability(tm, other), pct = (p * 100).toFixed(0), cls = p >= .7 ? 'safe' : p >= .45 ? 'moderate' : p >= .25 ? 'risky' : 'longshot'; probHTML = `<span class="team-prob ${cls}">${pct}%</span>`; }
+                s.innerHTML = `<span class="team-seed" data-tier="${seedTier(tm.seed)}">${tm.seed}</span><span class="team-name">${tm.name}</span>${probHTML}`;
+                const pick = () => selectFF(id, tm);
+                s.addEventListener('click', pick);
+                s.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+            }
+            box.appendChild(s);
+        }
+        return box;
+    }
+
+    // ---- Mobile Bracket render (tabbed) ----
     function renderBracket() {
         const container=document.getElementById('bracket-container'); container.innerHTML='';
         MarchMadnessData.REGION_NAMES.forEach((rn,ri) => {

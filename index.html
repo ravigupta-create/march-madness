@@ -79,17 +79,22 @@
                 <span class="progress-text" id="progress-text">0 / 63</span>
             </div>
 
-            <div class="region-tabs" id="region-tabs" role="tablist"></div>
-            <div class="bracket-container" id="bracket-container" tabindex="-1"></div>
+            <!-- Full NCAA/ESPN-style bracket (desktop) -->
+            <div class="full-bracket" id="full-bracket"></div>
 
-            <div class="final-four-section" id="final-four-section">
-                <div class="final-four-title">Final Four</div>
-                <div class="final-four-games" id="ff-games"></div>
-                <div class="championship-game" id="championship-game"></div>
-                <div class="champion-display" id="champion-display" style="display:none;">
-                    <div class="label">National Champion</div>
-                    <div class="champ-name" id="champ-name"></div>
-                    <div class="champ-seed" id="champ-seed"></div>
+            <!-- Mobile: region tabs fallback -->
+            <div class="mobile-bracket" id="mobile-bracket">
+                <div class="region-tabs" id="region-tabs" role="tablist"></div>
+                <div class="bracket-container" id="bracket-container" tabindex="-1"></div>
+                <div class="final-four-section" id="final-four-section">
+                    <div class="final-four-title">Final Four</div>
+                    <div class="final-four-games" id="ff-games"></div>
+                    <div class="championship-game" id="championship-game"></div>
+                    <div class="champion-display" id="champion-display" style="display:none;">
+                        <div class="label">National Champion</div>
+                        <div class="champ-name" id="champ-name"></div>
+                        <div class="champ-seed" id="champ-seed"></div>
+                    </div>
                 </div>
             </div>
         </div>
